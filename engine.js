@@ -275,6 +275,7 @@ function buildModel(id, opts) {
     }
   }
 
+  const faceIdx = shapes.length;
   addShape(shapes, headPts, { fill: face, stroke: pal.line, lw: 4.5 }, rng, 5);
 
   const pattern = PATTERNS[t.pattern];
@@ -599,8 +600,11 @@ function buildModel(id, opts) {
     } else if (sp.ear === 'tuft') {
       rcx = s * earRx * 0.72; rcy = topY * 0.78;
     }
+    const e0 = shapes.length;
     addShape(shapes, wobblyCircle(rcx, rcy - 5, 2.5, 2.5, 6, 1.5, rng), { fill: ringColor, stroke: null }, rng, 3);
     addShape(shapes, wobblyCircle(rcx, rcy, 6, 6, 8, 2, rng), { fill: null, stroke: ringColor, lw: 2.5 }, rng, 3);
+    const moved = shapes.splice(e0, 2);
+    shapes.splice(faceIdx, 0, ...moved);
     extras.push('earring');
   } else if (acc === 'hat') {
     const hy = topY * 0.58, tilt = (rng() - .5) * 0.2;
@@ -675,6 +679,8 @@ function drawPath(ctx, sh, env) {
   const cy = sh.cy || 0;
   const sx = sh.sx === undefined ? 1 : sh.sx;
   const cx = sh.cx || 0;
+  const drop = sh.drop || 0;
+  const dw = sh.dropW;
   const P = (i) => {
     const k = ((i % n) + n) % n;
     const o = offs[k];
@@ -682,7 +688,7 @@ function drawPath(ctx, sh, env) {
       o[0] += (lx + (Math.random() - .5) * j - o[0]) * FRICTION;
       o[1] += (ly + (Math.random() - .5) * j - o[1]) * FRICTION;
     }
-    const y = pts[k][1] + fdy + o[1];
+    const y = pts[k][1] + fdy + o[1] + drop * (dw ? dw[k] : 1);
     const x = pts[k][0] + fdx + o[0];
     return [cx + (x - cx) * sx, cy + (y - cy) * sy];
   };

@@ -88,17 +88,30 @@ function loadCritter(id) {
   }
 
   const m = model.mouth;
-  const rng2 = mulberry32(hashStr(currentId + ':open'));
-  const mkOpen = (pts, opts) => Object.assign({ pts, offs: pts.map(() => [0, 0]), closed: true, lw: 3.5, alpha: 1, intensity: 8, role: 'mouthOpen', cy: m.y, sy: 0.06, alphaMul: 0 }, opts);
-  const crescent = (curve, expr) => {
-    const top = wobblyArc(0, m.y - 2, m.mw, 4 + m.mh * 0.55 * curve, 0.15, Math.PI - 0.15, 12, 3, rng2);
-    const bot = wobblyArc(0, m.y - 2, m.mw * 0.85, m.mh * 1.7, 0.2, Math.PI - 0.2, 12, 3, rng2);
-    return mkOpen(top.concat(bot), { fill: pal.line, stroke: pal.line, lw: 2.5, expr });
-  };
-  const tongueSh = mkOpen(wobblyCircle(0, m.y + m.mh * 0.55, m.mw * 0.4, m.mh * 0.35, 10, 3, rng2), { fill: pal.mouth, stroke: null, tongue: true });
-  openMouthShapes = [crescent(1, 'smile'), crescent(0, 'flat'), crescent(-1, 'frown'), tongueSh];
-  const firstMouth = model.shapes.findIndex(s => s.role === 'mouth');
-  model.shapes.splice(firstMouth < 0 ? model.shapes.length : firstMouth, 0, ...openMouthShapes);
+  model.dropCap = Math.max(12, model.ry * 0.95 - m.y - 8);
+  openMouthShapes = [];
+  for (const sh of model.shapes.filter(s => s.role === 'mouth')) {
+    const c = centroid(sh.pts);
+    if (!sh.closed) {
+      const rig = {
+        pts: sh.pts.concat(sh.pts.slice().reverse()),
+        offs: sh.pts.concat(sh.pts).map(() => [0, 0]),
+        closed: true, lw: sh.lw, alpha: 1, intensity: sh.intensity,
+        fill: pal.line, stroke: pal.line, role: 'mouthRig',
+        drop: 0, dropW: sh.pts.map(() => 0).concat(sh.pts.map(() => 1)),
+        cx: c[0], cy: c[1], sx: 1, sy: 1, alphaMul: 1
+      };
+      model.shapes.splice(model.shapes.indexOf(sh), 0, rig);
+      sh.alphaMul = 0;
+      openMouthShapes.push(rig);
+    } else if (sh.fill === pal.mouth) {
+      sh.alphaMul = 0;
+    } else if (sh.fill === pal.line) {
+      sh.cx = c[0]; sh.cy = c[1];
+      sh.holeRig = true;
+      openMouthShapes.push(sh);
+    }
+  }
 
   titleEl.textContent = 'the critter @' + id + ' — rigged';
   const fg = luminance(pal.bg) >= 128 ? '#000' : '#fff';
@@ -242,15 +255,13 @@ function frame(now) {
       const bl = b.side === 'L' ? sig.blinkL : b.side === 'R' ? sig.blinkR : (sig.blinkL + sig.blinkR) / 2;
       b.sh.sy = bl;
     }
-    const wS = clamp(sig.expr, 0, 1), wF = clamp(-sig.expr, 0, 1), wN = 1 - Math.abs(sig.expr);
-    const exprW = { smile: wS, flat: wN, frown: wF };
     for (const sh of model.shapes) {
-      if (sh.role === 'mouth') sh.alphaMul = 0;
-      if (sh.role === 'mouthOpen') {
-        sh.sx = 0.8 + 0.3 * sig.mouth + sig.mouthW * 0.6;
-        sh.sy = 0.06 + 0.94 * sig.mouth;
-        if (sh.tongue) sh.alphaMul = clamp((sig.mouth - 0.45) * 2.5, 0, 1);
-        else sh.alphaMul = exprW[sh.expr];
+      if (sh.role === 'mouthRig') {
+        sh.drop = sig.mouth * model.dropCap;
+        sh.sx = 1 + sig.mouthW * 0.4;
+      } else if (sh.holeRig) {
+        sh.sy = 0.15 + 0.85 * sig.mouth;
+        sh.sx = 1 + sig.mouthW * 0.4;
       }
     }
     const env = { drx: sig.yaw * 0.5, dry: -sig.pitch * 0.6, angle: Math.atan2(sig.yaw, -sig.pitch + 0.001), Ui: 2 + sig.mouth * 18, frozen: false };
