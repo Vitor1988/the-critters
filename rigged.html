@@ -98,8 +98,7 @@ function loadCritter(id) {
       const inner = bi === 0 ? 1 : -1;
       const pts = wobblyArc(ex, ey - er * 1.75, er * 1.05, er * 0.5, Math.PI * 1.08, Math.PI * 1.92, 8, 3, rng3);
       const sh = { pts, offs: pts.map(() => [0, 0]), closed: false, lw: 4, alpha: 1, intensity: 8, fill: null, stroke: pal.line, role: 'browRig', oy: 0, drop: 0, dropW: pts.map((p, pi) => (p[0] - ex) / (er * 1.05) * inner) };
-      const eyeShapesIdx = model.shapes.findIndex(s => s.role === 'eye');
-      model.shapes.splice(eyeShapesIdx < 0 ? model.shapes.length : eyeShapesIdx, 0, sh);
+      model.shapes.push(sh);
       browRigs.push({ sh, dir: 1 });
     }
   }
