@@ -111,25 +111,13 @@ function loadCritter(id) {
     holeCy = centroid(sh.pts)[1];
     break;
   }
+  const nonClosed = [];
   for (const sh of model.shapes.filter(s => s.role === 'mouth')) {
     const c = centroid(sh.pts);
     if (!sh.closed) {
-      const rig = {
-        half: sh.pts.length,
-        pts: sh.pts.concat(sh.pts.map(p => [p[0], p[1]]).reverse()),
-        offs: sh.pts.concat(sh.pts).map(() => [0, 0]),
-        closed: true, lw: sh.lw, alpha: 1, intensity: sh.intensity,
-        fill: pal.line, stroke: pal.line, role: 'mouthRig',
-        drop: 0, dropW: sh.pts.map(() => 0).concat(sh.pts.map(() => 1)),
-        cx: c[0], cy: c[1], sx: 1, sy: 1, alphaMul: 1
-      };
-      let mwMax = 1;
-      for (const p of rig.pts) mwMax = Math.max(mwMax, Math.abs(p[0] - c[0]));
-      rig.halfW = mwMax;
-      rig.basePts = rig.pts.map(p => [p[0], p[1]]);
-      model.shapes.splice(model.shapes.indexOf(sh), 0, rig);
-      sh.alphaMul = 0;
-      openMouthShapes.push(rig);
+      let wMin = Infinity, wMax = -Infinity;
+      for (const p of sh.pts) { if (p[0] < wMin) wMin = p[0]; if (p[0] > wMax) wMax = p[0]; }
+      if (wMax - wMin >= 6) nonClosed.push({ sh, c }); else sh.alphaMul = 0;
     } else if (sh.fill === pal.mouth) {
       sh.alphaMul = 0;
     } else if (sh.fill === pal.line || m.style === 'open' || m.style === 'grin' || m.style === 'o') {
@@ -148,6 +136,28 @@ function loadCritter(id) {
       sh.cx = 0;
       sh.upperTeeth = c[1] < m.y - 4;
     }
+  }
+
+  if (nonClosed.length) {
+    nonClosed.sort((a, b) => a.c[0] - b.c[0]);
+    const topPts = [];
+    for (const { sh } of nonClosed) for (const p of sh.pts) topPts.push([p[0], p[1]]);
+    const cAll = centroid(topPts);
+    const rig = {
+      half: topPts.length,
+      pts: topPts.map(p => [p[0], p[1]]).concat(topPts.map(p => [p[0], p[1]]).reverse()),
+      offs: topPts.concat(topPts).map(() => [0, 0]),
+      closed: true, lw: nonClosed[0].sh.lw, alpha: 1, intensity: nonClosed[0].sh.intensity,
+      fill: pal.line, stroke: pal.line, role: 'mouthRig',
+      drop: 0, cx: cAll[0], cy: cAll[1], sx: 1, sy: 1, alphaMul: 1
+    };
+    let mwMax = 1;
+    for (const p of topPts) mwMax = Math.max(mwMax, Math.abs(p[0] - cAll[0]));
+    rig.halfW = mwMax;
+    rig.basePts = rig.pts.map(p => [p[0], p[1]]);
+    model.shapes.splice(model.shapes.indexOf(nonClosed[0].sh), 0, rig);
+    for (const { sh } of nonClosed) sh.alphaMul = 0;
+    openMouthShapes.push(rig);
   }
 
   titleEl.textContent = 'the critter @' + id + ' — rigged';
