@@ -667,6 +667,8 @@ function drawPath(ctx, sh, env) {
   const j = env.Ui * 0.5 * (0.4 + I * 0.08);
   const sy = sh.sy === undefined ? 1 : sh.sy;
   const cy = sh.cy || 0;
+  const sx = sh.sx === undefined ? 1 : sh.sx;
+  const cx = sh.cx || 0;
   const P = (i) => {
     const k = ((i % n) + n) % n;
     const o = offs[k];
@@ -675,7 +677,8 @@ function drawPath(ctx, sh, env) {
       o[1] += (ly + (Math.random() - .5) * j - o[1]) * FRICTION;
     }
     const y = pts[k][1] + fdy + o[1];
-    return [pts[k][0] + fdx + o[0], cy + (y - cy) * sy];
+    const x = pts[k][0] + fdx + o[0];
+    return [cx + (x - cx) * sx, cy + (y - cy) * sy];
   };
   ctx.beginPath();
   if (sh.closed) {

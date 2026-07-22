@@ -221,7 +221,7 @@ function frame(now) {
 
   const S = Math.min(W, H) / 470;
   ctx.save();
-  ctx.translate(W / 2 + sig.hx * 16 * S, H / 2 + (12 + sig.hy * 22 + sig.pitch * 10) * S);
+  ctx.translate(W / 2 + sig.hx * 16 * S, H / 2 + (12 + sig.hy * 22 - sig.pitch * 12) * S);
   ctx.rotate(sig.roll * 0.5);
   ctx.scale(S, S);
 
@@ -234,7 +234,7 @@ function frame(now) {
       if (sh.role === 'mouth') sh.alphaMul = 1 - sig.mouth * 0.9;
       if (sh.role === 'mouthOpen') { sh.alphaMul = sig.mouth; sh.sy = 0.2 + 0.8 * sig.mouth; }
     }
-    const env = { drx: sig.yaw * 0.5, dry: sig.pitch * 0.5, angle: Math.atan2(sig.yaw, sig.pitch + 0.001), Ui: 2 + sig.mouth * 18, frozen: false };
+    const env = { drx: sig.yaw * 0.5, dry: -sig.pitch * 0.6, angle: Math.atan2(sig.yaw, -sig.pitch + 0.001), Ui: 2 + sig.mouth * 18, frozen: false };
     for (const sh of model.shapes) {
       if (sh.follow) {
         const f = sh.follow;
