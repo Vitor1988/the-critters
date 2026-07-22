@@ -138,8 +138,9 @@ function processLandmarks(lm) {
   const mouthW = dist(lm[61], lm[291]) / faceH;
 
   const rollRaw = Math.atan2(lm[263].y - lm[33].y, lm[263].x - lm[33].x);
-  const dl0 = dist(lm[1], lm[234]), dr0 = dist(lm[1], lm[454]);
-  const yawRaw = -(dl0 - dr0) / (dl0 + dr0);
+  const midX = (lm[234].x + lm[454].x) / 2;
+  const halfW = Math.abs(lm[454].x - lm[234].x) / 2 + 1e-6;
+  const yawRaw = clamp(-(lm[1].x - midX) / halfW, -1.2, 1.2);
   const pitchRaw = ((lm[10].y + lm[152].y) / 2 - lm[1].y) / (lm[152].y - lm[10].y);
   const hxRaw = (0.5 - lm[1].x) * 2;
   const hyRaw = (lm[1].y - 0.5) * 2;
@@ -177,7 +178,7 @@ function processLandmarks(lm) {
   sig.expr += (exprT - sig.expr) * 0.3;
 
   sig.roll += (-(rollRaw - calib.roll) * 2 - sig.roll) * 0.2;
-  sig.yaw += ((yawRaw - calib.yaw) * 3 - sig.yaw) * 0.2;
+  sig.yaw += (clamp((yawRaw - calib.yaw) * 2.2, -1.2, 1.2) - sig.yaw) * 0.2;
   sig.pitch += ((pitchRaw - calib.pitch) * 6 - sig.pitch) * 0.2;
 
   const eyeW = dist(lm[33], lm[133]);
