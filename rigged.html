@@ -102,7 +102,7 @@ function loadCritter(id) {
 }
 
 const sig = { blinkL: 1, blinkR: 1, mouth: 0, yaw: 0, pitch: 0, roll: 0, gx: 0, gy: 0, hx: 0, hy: 0 };
-let calib = null, calibFrames = 0, calibAcc = { ear: 0, mouth: 0 };
+let calib = null, calibFrames = 0, calibAcc = { ear: 0, mouth: 0, yaw: 0, pitch: 0, roll: 0, hx: 0, hy: 0 };
 let tracking = false;
 const mouse = { x: 0, y: 0, down: false };
 window.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
@@ -118,12 +118,26 @@ function processLandmarks(lm) {
   const earR = dist(lm[386], lm[374]) / dist(lm[362], lm[263]);
   const mouthR = dist(lm[13], lm[14]) / dist(lm[61], lm[291]);
 
+  const rollRaw = Math.atan2(lm[263].y - lm[33].y, lm[263].x - lm[33].x);
+  const dl0 = dist(lm[1], lm[234]), dr0 = dist(lm[1], lm[454]);
+  const yawRaw = -(dl0 - dr0) / (dl0 + dr0);
+  const pitchRaw = ((lm[10].y + lm[152].y) / 2 - lm[1].y) / (lm[152].y - lm[10].y);
+  const hxRaw = (0.5 - lm[1].x) * 2;
+  const hyRaw = (lm[1].y - 0.5) * 2;
+
   if (!calib) {
     calibFrames++;
     calibAcc.ear += (earL + earR) / 2;
     calibAcc.mouth += mouthR;
+    calibAcc.yaw += yawRaw; calibAcc.pitch += pitchRaw; calibAcc.roll += rollRaw;
+    calibAcc.hx += hxRaw; calibAcc.hy += hyRaw;
     if (calibFrames >= 50) {
-      calib = { ear: calibAcc.ear / calibFrames, mouth: calibAcc.mouth / calibFrames };
+      const n = calibFrames;
+      calib = {
+        ear: calibAcc.ear / n, mouth: calibAcc.mouth / n,
+        yaw: calibAcc.yaw / n, pitch: calibAcc.pitch / n, roll: calibAcc.roll / n,
+        hx: calibAcc.hx / n, hy: calibAcc.hy / n
+      };
       setStatus('tracking — express yourself');
     }
     return;
@@ -138,13 +152,9 @@ function processLandmarks(lm) {
   const tMouth = clamp((mouthR - calib.mouth * 1.25) * 5, 0, 1);
   sig.mouth += (tMouth - sig.mouth) * 0.35;
 
-  const roll = Math.atan2(lm[263].y - lm[33].y, lm[263].x - lm[33].x);
-  const dl = dist(lm[1], lm[234]), dr = dist(lm[1], lm[454]);
-  const yaw = -(dl - dr) / (dl + dr);
-  const pitch = ((lm[10].y + lm[152].y) / 2 - lm[1].y) / (lm[152].y - lm[10].y);
-  sig.roll += (-roll - sig.roll) * 0.2;
-  sig.yaw += (yaw * 1.6 - sig.yaw) * 0.2;
-  sig.pitch += (pitch * 1.2 - sig.pitch) * 0.2;
+  sig.roll += (-(rollRaw - calib.roll) * 2 - sig.roll) * 0.2;
+  sig.yaw += ((yawRaw - calib.yaw) * 3 - sig.yaw) * 0.2;
+  sig.pitch += ((pitchRaw - calib.pitch) * 6 - sig.pitch) * 0.2;
 
   const eyeW = dist(lm[33], lm[133]);
   const gx = -((lm[468].x - (lm[33].x + lm[133].x) / 2) / eyeW) * 2.4;
@@ -152,8 +162,8 @@ function processLandmarks(lm) {
   sig.gx += (clamp(gx, -1, 1) - sig.gx) * 0.3;
   sig.gy += (clamp(gy, -1, 1) - sig.gy) * 0.3;
 
-  sig.hx += ((0.5 - lm[1].x) * 2 - sig.hx) * 0.15;
-  sig.hy += ((lm[1].y - 0.5) * 2 - sig.hy) * 0.15;
+  sig.hx += ((hxRaw - calib.hx) * 2 - sig.hx) * 0.15;
+  sig.hy += ((hyRaw - calib.hy) * 2 - sig.hy) * 0.15;
 }
 
 let landmarker = null;
@@ -211,7 +221,7 @@ function frame(now) {
 
   const S = Math.min(W, H) / 470;
   ctx.save();
-  ctx.translate(W / 2 + sig.hx * 14 * S, H / 2 + (12 + sig.hy * 12) * S);
+  ctx.translate(W / 2 + sig.hx * 16 * S, H / 2 + (12 + sig.hy * 22 + sig.pitch * 10) * S);
   ctx.rotate(sig.roll * 0.5);
   ctx.scale(S, S);
 
@@ -252,7 +262,7 @@ function savePng() {
 document.getElementById('btn-random').addEventListener('click', () => loadCritter(randomId()));
 document.getElementById('btn-save').addEventListener('click', savePng);
 document.getElementById('btn-recal').addEventListener('click', () => {
-  calib = null; calibFrames = 0; calibAcc = { ear: 0, mouth: 0 };
+  calib = null; calibFrames = 0; calibAcc = { ear: 0, mouth: 0, yaw: 0, pitch: 0, roll: 0, hx: 0, hy: 0 };
   if (tracking) setStatus('calibrating — look neutral at the camera…');
 });
 document.getElementById('btn-back').addEventListener('click', () => { window.location.href = 'index.html' + window.location.hash; });
