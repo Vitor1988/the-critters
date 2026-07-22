@@ -338,9 +338,9 @@ function frame(now) {
       br.sh.oy = -sig.surprise * 14 + sig.anger * 7 - sig.joy * 2;
       br.sh.drop = (sig.anger - sig.sad) * 10 * br.dir;
     }
-    const mW = 1 + sig.mouthW * 0.4 + Math.max(0, sig.expr) * 0.08;
+    const mW = 1 + sig.mouthW * 0.55 + Math.max(0, sig.expr) * 0.1;
     const holeH = (model.shapes.find(s => s.holeRig) || {}).holeH || 14;
-    const jawShift = sig.jawX * 7;
+    const jawShift = sig.jawX * 10;
     for (const sh of model.shapes) {
       if (sh.role === 'mouthRig') {
         sh.drop = sig.mouth * model.dropCap;
@@ -349,12 +349,12 @@ function frame(now) {
       } else if (sh.teethRig) {
         sh.sx = mW;
         sh.ox = jawShift;
-        sh.oy = sig.mouth * holeH * 0.55;
+        sh.oy = sig.mouth * holeH * 0.8;
       } else if (sh.holeRig) {
-        const holeSy = (0.12 + 1.05 * sig.mouth) * (1 + sig.pucker * 0.35);
+        const holeSy = (0.1 + 1.5 * sig.mouth) * (1 + sig.pucker * 0.5);
         sh.sy = holeSy;
-        sh.sx = mW * (1 - sig.pucker * 0.3);
-        sh.oy = (holeSy - 1) * sh.holeH * 0.55;
+        sh.sx = mW * (1 - sig.pucker * 0.45);
+        sh.oy = (holeSy - 1) * sh.holeH * 0.5;
         sh.ox = jawShift;
       }
     }
