@@ -284,13 +284,13 @@ function buildModel(id, opts) {
       const sy = -ry * (0.42 + k * 0.14);
       const w = earRx * (0.52 - k * 0.1);
       addShape(shapes, wobblyArc(0, sy, w, 9, Math.PI * 1.12, Math.PI * 1.88, 8, 3, rng),
-        { fill: null, stroke: pal.line, closed: false, lw: 5, alpha: 0.75 }, rng, 2);
+        { fill: null, stroke: pal.line, closed: false, lw: 5, alpha: 0.75 }, rng, 5);
     }
     for (const s of [-1, 1]) {
       for (let k = 0; k < 2; k++) {
         const sy = ry * (0.12 + k * 0.2);
         addShape(shapes, wobblyArc(s * mouthRx * 0.9, sy, 16, 6, s > 0 ? -0.9 : Math.PI - 0.9, s > 0 ? 0.9 : Math.PI + 0.9, 6, 2.5, rng),
-          { fill: null, stroke: pal.line, closed: false, lw: 4, alpha: 0.75 }, rng, 2);
+          { fill: null, stroke: pal.line, closed: false, lw: 4, alpha: 0.75 }, rng, 5);
       }
     }
   } else if (pattern === 'spots' && !sp.patches) {
@@ -300,15 +300,15 @@ function buildModel(id, opts) {
       const sx = s * (rx * 0.3 + rng() * rx * 0.45);
       const sy = -ry * 0.65 + rng() * ry * 0.75;
       addShape(shapes, wobblyCircle(sx, sy, 10 + rng() * 14, 8 + rng() * 10, 8, 4, rng, rng() * 3),
-        { fill: pal.ear, stroke: null, alpha: 0.45 }, rng, 2);
+        { fill: pal.ear, stroke: null, alpha: 0.45 }, rng, 5);
     }
   } else if (pattern === 'mask' && !sp.patches) {
     addShape(shapes, wobblyCircle(0, -ry * 0.18, eyeRx * 0.95, ry * 0.3, 14, 5, rng),
-      { fill: pal.line, stroke: null, alpha: 0.16 }, rng, 2);
+      { fill: pal.line, stroke: null, alpha: 0.16 }, rng, 5);
   } else if (pattern === 'patch' && !sp.patches) {
     const s = rng() < 0.5 ? -1 : 1;
     addShape(shapes, wobblyCircle(s * eyeRx * 0.45, -ry * 0.2, 26 + rng() * 8, 30 + rng() * 8, 10, 5, rng, s * 0.3),
-      { fill: pal.ear, stroke: null, alpha: 0.85 }, rng, 2);
+      { fill: pal.ear, stroke: null, alpha: 0.85 }, rng, 5);
   }
 
   const topStyle = hatWorn ? 'none' : TOP_STYLES[t.top];
@@ -544,7 +544,7 @@ function buildModel(id, opts) {
   if (acc === 'blush') {
     for (const s of [-1, 1]) {
       addShape(shapes, wobblyCircle(s * mouthRx * 0.72, myBase - ry * 0.22, 11 + rng() * 4, 7 + rng() * 3, 8, 2.5, rng),
-        { fill: pal.mouth, stroke: null, alpha: 0.55 }, rng, 3);
+        { fill: pal.mouth, stroke: null, alpha: 0.55 }, rng, 5);
     }
   } else if (acc === 'whiskers' && !sp.beak) {
     for (const s of [-1, 1]) {
@@ -559,11 +559,11 @@ function buildModel(id, opts) {
   } else if (acc === 'scar') {
     const s = rng() < 0.5 ? -1 : 1;
     const x0 = s * earRx * 0.35, y0 = -ry * 0.55, x1 = s * earRx * 0.6, y1 = -ry * 0.28;
-    addShape(shapes, [[x0, y0], [x1, y1]], { fill: null, stroke: pal.line, closed: false, lw: 2.5 }, rng, 3);
+    addShape(shapes, [[x0, y0], [x1, y1]], { fill: null, stroke: pal.line, closed: false, lw: 2.5 }, rng, 5);
     for (let k = 0; k < 3; k++) {
       const f = 0.2 + k * 0.3;
       const px = x0 + (x1 - x0) * f, py = y0 + (y1 - y0) * f;
-      addShape(shapes, [[px - 5, py + 2], [px + 5, py - 2]], { fill: null, stroke: pal.line, closed: false, lw: 2 }, rng, 3);
+      addShape(shapes, [[px - 5, py + 2], [px + 5, py - 2]], { fill: null, stroke: pal.line, closed: false, lw: 2 }, rng, 5);
     }
   } else if (acc === 'piercing') {
     const s = rng() < 0.5 ? -1 : 1;
