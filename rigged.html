@@ -90,26 +90,13 @@ function loadCritter(id) {
   const m = model.mouth;
   const rng2 = mulberry32(hashStr(currentId + ':open'));
   const mkOpen = (pts, opts) => Object.assign({ pts, offs: pts.map(() => [0, 0]), closed: true, lw: 3.5, alpha: 1, intensity: 8, role: 'mouthOpen', cy: m.y, sy: 0.06, alphaMul: 0 }, opts);
-  openMouthShapes = [];
-  if (m.style === 'open' || m.style === 'grin' || m.style === 'o') {
-    openMouthShapes.push(mkOpen(wobblyCircle(0, m.y - 2, m.mw * 0.8, m.mh * 0.9, 12, 4, rng2), { fill: pal.line, stroke: pal.line, lw: 2 }));
-    openMouthShapes.push(mkOpen(wobblyCircle(0, m.y + m.mh * 0.3, m.mw * 0.4, m.mh * 0.3, 10, 3, rng2), { fill: pal.mouth, stroke: null, tongue: true }));
-    model.keepMouth = false;
-  } else if (m.style === 'mad') {
-    const top = wobblyArc(0, m.y + 12, m.mw * 0.9, 9, Math.PI + 0.2, Math.PI * 2 - 0.2, 10, 3, rng2);
-    const bot = wobblyArc(0, m.y + 12, m.mw * 0.75, 26, -0.2, Math.PI + 0.2, 12, 3, rng2);
-    openMouthShapes.push(mkOpen(top.concat(bot), { fill: pal.line, stroke: pal.line, lw: 2 }));
-    model.keepMouth = true;
-  } else {
-    const arcY = m.y - 12;
-    const top = wobblyArc(0, arcY, m.mw, m.mh * 0.75, 0.15, Math.PI - 0.15, 12, 3, rng2);
-    const bot = wobblyArc(0, arcY, m.mw * 0.8, m.mh * 1.5, 0.2, Math.PI - 0.2, 12, 3, rng2);
-    openMouthShapes.push(mkOpen(top.concat(bot), { fill: pal.line, stroke: pal.line, lw: 2 }));
-    if (m.style !== 'tongue') {
-      openMouthShapes.push(mkOpen(wobblyCircle(0, arcY + m.mh * 0.9, m.mw * 0.4, m.mh * 0.35, 10, 3, rng2), { fill: pal.mouth, stroke: null, tongue: true }));
-    }
-    model.keepMouth = true;
-  }
+  const lipPts = wobblyArc(0, m.y - 2, m.mw, m.mh * 0.8, 0.12, Math.PI - 0.12, 12, 3, rng2);
+  const lipLine = mkOpen(lipPts, { fill: null, stroke: pal.line, closed: false, lw: 3.5, cy: m.y - 2, sy: 1, alphaMul: 1, lip: true });
+  const top = wobblyArc(0, m.y - 2, m.mw, 6, 0.15, Math.PI - 0.15, 10, 3, rng2);
+  const bot = wobblyArc(0, m.y - 2, m.mw * 0.85, m.mh * 1.7, 0.2, Math.PI - 0.2, 12, 3, rng2);
+  const crescent = mkOpen(top.concat(bot), { fill: pal.line, stroke: pal.line, lw: 2 });
+  const tongueSh = mkOpen(wobblyCircle(0, m.y + m.mh * 0.55, m.mw * 0.4, m.mh * 0.35, 10, 3, rng2), { fill: pal.mouth, stroke: null, tongue: true });
+  openMouthShapes = [lipLine, crescent, tongueSh];
   const firstMouth = model.shapes.findIndex(s => s.role === 'mouth');
   model.shapes.splice(firstMouth < 0 ? model.shapes.length : firstMouth, 0, ...openMouthShapes);
 
@@ -118,7 +105,7 @@ function loadCritter(id) {
   titleEl.style.color = fg; descEl.style.color = fg;
 }
 
-const sig = { blinkL: 1, blinkR: 1, mouth: 0, yaw: 0, pitch: 0, roll: 0, gx: 0, gy: 0, hx: 0, hy: 0 };
+const sig = { blinkL: 1, blinkR: 1, mouth: 0, mouthW: 0, expr: 0, yaw: 0, pitch: 0, roll: 0, gx: 0, gy: 0, hx: 0, hy: 0 };
 let calib = null, calibFrames = 0, calibAcc = { ear: 0, mouth: 0, yaw: 0, pitch: 0, roll: 0, hx: 0, hy: 0, mouthW: 0 };
 let tracking = false;
 const mouse = { x: 0, y: 0, down: false };
@@ -171,7 +158,10 @@ function processLandmarks(lm) {
   const openT = clamp(Math.pow(clamp((mouthR - calib.mouth * 1.1) / 0.05, 0, 1), 0.8), 0, 1);
   sig.mouth += (openT - sig.mouth) * (openT > sig.mouth ? 0.6 : 0.25);
   const wT = clamp((mouthW - calib.mouthW) / calib.mouthW, -0.25, 0.4);
-  sig.mouthW = (sig.mouthW || 0) + (wT - (sig.mouthW || 0)) * 0.3;
+  sig.mouthW += (wT - sig.mouthW) * 0.3;
+  const cornerY = (lm[61].y + lm[291].y) / 2;
+  const exprT = clamp(-(cornerY - lm[17].y) / faceH * 9, -1, 1);
+  sig.expr += (exprT - sig.expr) * 0.3;
 
   sig.roll += (-(rollRaw - calib.roll) * 2 - sig.roll) * 0.2;
   sig.yaw += ((yawRaw - calib.yaw) * 3 - sig.yaw) * 0.2;
@@ -229,6 +219,7 @@ function frame(now) {
     sig.yaw += (mmx * 0.4 - sig.yaw) * 0.08;
     sig.pitch += (mmy * 0.3 - sig.pitch) * 0.08;
     sig.mouth += ((mouse.down ? 0.4 + Math.random() * 0.6 : 0) - sig.mouth) * 0.3;
+    sig.expr += (clamp(-mmy * 1.2, -1, 1) - sig.expr) * 0.1;
     blinkTimer -= 1;
     if (blinkTimer <= 0) blinkTimer = 120 + Math.random() * 200;
     const tb = blinkTimer < 8 ? 0.05 : 1;
@@ -252,12 +243,17 @@ function frame(now) {
       b.sh.sy = bl;
     }
     for (const sh of model.shapes) {
-      if (sh.role === 'mouth') sh.alphaMul = model.keepMouth ? 1 : 1 - sig.mouth * 0.95;
+      if (sh.role === 'mouth') sh.alphaMul = 0;
       if (sh.role === 'mouthOpen') {
-        sh.alphaMul = clamp(sig.mouth * 1.6, 0, 1);
-        sh.sx = 0.75 + 0.35 * sig.mouth + (sig.mouthW || 0) * 0.6;
-        sh.sy = 0.06 + 0.94 * sig.mouth;
-        if (sh.tongue) sh.alphaMul = clamp((sig.mouth - 0.45) * 2.5, 0, 1);
+        if (sh.lip) {
+          sh.alphaMul = 1 - sig.mouth * 0.25;
+          sh.sy = sig.expr;
+        } else {
+          sh.alphaMul = clamp(sig.mouth * 1.6, 0, 1);
+          sh.sx = 0.75 + 0.35 * sig.mouth + sig.mouthW * 0.6;
+          sh.sy = 0.06 + 0.94 * sig.mouth;
+          if (sh.tongue) sh.alphaMul = clamp((sig.mouth - 0.45) * 2.5, 0, 1);
+        }
       }
     }
     const env = { drx: sig.yaw * 0.5, dry: -sig.pitch * 0.6, angle: Math.atan2(sig.yaw, -sig.pitch + 0.001), Ui: 2 + sig.mouth * 18, frozen: false };
