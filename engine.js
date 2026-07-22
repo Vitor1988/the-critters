@@ -335,8 +335,8 @@ function buildModel(id, opts) {
       const ex = n === 1 ? topX : topX + (k === 0 ? -earRx * 0.35 : earRx * 0.35);
       const by = topYAt(ex);
       const top = [ex + (rng() - .5) * 20, by - 62 - rng() * 20];
-      addShape(shapes, [[ex, by + 4], [ex + 8, by - 22], [ex - 6, by - 42], top], { fill: null, stroke: pal.line, closed: false, lw: 3 }, rng, 11);
-      addShape(shapes, wobblyCircle(top[0], top[1], 10, 10, 8, 3, rng), { fill: pal.horn, stroke: pal.line, lw: 2.5 }, rng, 11);
+      addShape(shapes, [[ex, by + 4], [ex + 8, by - 22], [ex - 6, by - 42], top], { fill: null, stroke: pal.line, closed: false, lw: 3 }, rng, 5);
+      addShape(shapes, wobblyCircle(top[0], top[1], 10, 10, 8, 3, rng), { fill: pal.horn, stroke: pal.line, lw: 2.5 }, rng, 6);
     }
   } else if (topStyle === 'mohawk') {
     const n = 3 + Math.floor(rng() * 3);
@@ -376,7 +376,7 @@ function buildModel(id, opts) {
     eyePos.push([ex, ey, er]);
     if (sp.patches && i < 2) {
       addShape(shapes, wobblyCircle(ex, ey, er * 1.6, er * 1.9, 10, 4, rng, (ex < 0 ? -1 : 1) * 0.35),
-        { fill: pal.line, stroke: null, alpha: 0.85 }, rng, 4);
+        { fill: pal.line, stroke: null, alpha: 0.85, role: 'patch' }, rng, 4);
     }
     if (i === eyepatchEye) continue;
     if (eyeStyle === 'closed' || (eyeStyle === 'wink' && i === 0)) {
@@ -434,6 +434,7 @@ function buildModel(id, opts) {
   const glassesEnd = glassesStart < 0 ? -1 : shapes.length;
 
   for (let k = eyeStart; k < shapes.length; k++) {
+    if (shapes[k].role) continue;
     if (glassesStart >= 0 && k >= glassesStart && k < glassesEnd) { shapes[k].role = 'glasses'; continue; }
     shapes[k].role = 'eye';
   }
