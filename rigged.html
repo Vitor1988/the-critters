@@ -130,7 +130,7 @@ window.addEventListener('keydown', e => { if (e.keyCode === 76) loadCritter(rand
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
-function processLandmarks(lm) {
+function processLandmarks(lm, bs) {
   const earL = dist(lm[159], lm[145]) / dist(lm[33], lm[133]);
   const earR = dist(lm[386], lm[374]) / dist(lm[362], lm[263]);
   const faceH = dist(lm[10], lm[152]);
@@ -163,29 +163,43 @@ function processLandmarks(lm) {
     return;
   }
 
-  const earAvg = (earL + earR) / 2;
-  const tBlinkL = clamp((earL - calib.ear * 0.45) / (calib.ear * 0.45), 0.05, 1);
-  const tBlinkR = clamp((earR - calib.ear * 0.45) / (calib.ear * 0.45), 0.05, 1);
-  sig.blinkL += (tBlinkL - sig.blinkL) * 0.45;
-  sig.blinkR += (tBlinkR - sig.blinkR) * 0.45;
-
-  const openT = clamp(Math.pow(clamp((mouthR - calib.mouth * 1.1) / 0.05, 0, 1), 0.8), 0, 1);
-  sig.mouth += (openT - sig.mouth) * (openT > sig.mouth ? 0.6 : 0.25);
-  const wT = clamp((mouthW - calib.mouthW) / calib.mouthW, -0.25, 0.4);
-  sig.mouthW += (wT - sig.mouthW) * 0.3;
-  const cornerY = (lm[61].y + lm[291].y) / 2;
-  const exprT = clamp(-(cornerY - lm[17].y) / faceH * 9, -1, 1);
-  sig.expr += (exprT - sig.expr) * 0.3;
+  if (bs) {
+    const jaw = clamp((bs.jawOpen - 0.03) * 1.15, 0, 1);
+    sig.mouth += (jaw - sig.mouth) * (jaw > sig.mouth ? 0.55 : 0.35);
+    const smile = (bs.mouthSmileLeft + bs.mouthSmileRight) / 2;
+    const frown = (bs.mouthFrownLeft + bs.mouthFrownRight) / 2;
+    sig.expr += (clamp(smile - frown, -1, 1) - sig.expr) * 0.25;
+    const pucker = (bs.mouthPucker + bs.mouthFunnel) / 2;
+    const stretch = (bs.mouthStretchLeft + bs.mouthStretchRight) / 2;
+    sig.mouthW += (clamp((stretch - pucker) * 0.8, -0.5, 0.5) - sig.mouthW) * 0.3;
+    sig.blinkL += (clamp(1 - bs.eyeBlinkLeft * 1.15, 0.03, 1) - sig.blinkL) * 0.5;
+    sig.blinkR += (clamp(1 - bs.eyeBlinkRight * 1.15, 0.03, 1) - sig.blinkR) * 0.5;
+    const bgx = clamp((bs.eyeLookOutLeft + bs.eyeLookInRight - bs.eyeLookInLeft - bs.eyeLookOutRight) * 1.3, -1, 1);
+    const bgy = clamp((bs.eyeLookDownLeft + bs.eyeLookDownRight - bs.eyeLookUpLeft - bs.eyeLookUpRight) * 1.1, -1, 1);
+    sig.gx += (bgx - sig.gx) * 0.35;
+    sig.gy += (bgy - sig.gy) * 0.35;
+  } else {
+    const tBlinkL = clamp((earL - calib.ear * 0.45) / (calib.ear * 0.45), 0.05, 1);
+    const tBlinkR = clamp((earR - calib.ear * 0.45) / (calib.ear * 0.45), 0.05, 1);
+    sig.blinkL += (tBlinkL - sig.blinkL) * 0.45;
+    sig.blinkR += (tBlinkR - sig.blinkR) * 0.45;
+    const openT = clamp(Math.pow(clamp((mouthR - calib.mouth * 1.1) / 0.05, 0, 1), 0.8), 0, 1);
+    sig.mouth += (openT - sig.mouth) * (openT > sig.mouth ? 0.6 : 0.25);
+    const wT = clamp((mouthW - calib.mouthW) / calib.mouthW, -0.25, 0.4);
+    sig.mouthW += (wT - sig.mouthW) * 0.3;
+    const cornerY = (lm[61].y + lm[291].y) / 2;
+    const exprT = clamp(-(cornerY - lm[17].y) / faceH * 9, -1, 1);
+    sig.expr += (exprT - sig.expr) * 0.3;
+    const eyeW = dist(lm[33], lm[133]);
+    const gx = -((lm[468].x - (lm[33].x + lm[133].x) / 2) / eyeW) * 2.4;
+    const gy = ((lm[468].y - (lm[159].y + lm[145].y) / 2) / (dist(lm[159], lm[145]) + 0.001)) * 0.8;
+    sig.gx += (clamp(gx, -1, 1) - sig.gx) * 0.3;
+    sig.gy += (clamp(gy, -1, 1) - sig.gy) * 0.3;
+  }
 
   sig.roll += (-(rollRaw - calib.roll) * 2 - sig.roll) * 0.2;
   sig.yaw += (clamp((yawRaw - calib.yaw) * 2.2, -1.2, 1.2) - sig.yaw) * 0.2;
   sig.pitch += ((pitchRaw - calib.pitch) * 6 - sig.pitch) * 0.2;
-
-  const eyeW = dist(lm[33], lm[133]);
-  const gx = -((lm[468].x - (lm[33].x + lm[133].x) / 2) / eyeW) * 2.4;
-  const gy = ((lm[468].y - (lm[159].y + lm[145].y) / 2) / (dist(lm[159], lm[145]) + 0.001)) * 0.8;
-  sig.gx += (clamp(gx, -1, 1) - sig.gx) * 0.3;
-  sig.gy += (clamp(gy, -1, 1) - sig.gy) * 0.3;
 
   sig.hx += ((hxRaw - calib.hx) * 2 - sig.hx) * 0.15;
   sig.hy += ((hyRaw - calib.hy) * 2 - sig.hy) * 0.15;
@@ -201,7 +215,8 @@ async function startTracking() {
         delegate: 'GPU'
       },
       runningMode: 'VIDEO',
-      numFaces: 1
+      numFaces: 1,
+      outputFaceBlendshapes: true
     });
     const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
     video.srcObject = stream;
@@ -225,7 +240,14 @@ function frame(now) {
 
   if (tracking && landmarker && video.readyState >= 2) {
     const res = landmarker.detectForVideo(video, now);
-    if (res.faceLandmarks && res.faceLandmarks[0]) processLandmarks(res.faceLandmarks[0]);
+    if (res.faceLandmarks && res.faceLandmarks[0]) {
+      let bs = null;
+      if (res.faceBlendshapes && res.faceBlendshapes[0]) {
+        bs = {};
+        for (const c of res.faceBlendshapes[0].categories) bs[c.categoryName] = c.score;
+      }
+      processLandmarks(res.faceLandmarks[0], bs);
+    }
   } else if (!tracking) {
     const mmx = (mouse.x - W / 2) / (W / 2), mmy = (mouse.y - H / 2) / (H / 2);
     sig.gx += (clamp(mmx, -1, 1) - sig.gx) * 0.1;
