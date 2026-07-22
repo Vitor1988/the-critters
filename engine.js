@@ -694,9 +694,9 @@ function drawPath(ctx, sh, env) {
       o[0] += (lx + (Math.random() - .5) * j - o[0]) * FRICTION;
       o[1] += (ly + (Math.random() - .5) * j - o[1]) * FRICTION;
     }
-    const y = pts[k][1] + fdy + o[1] + drop * (dw ? dw[k] : 1);
-    const x = pts[k][0] + fdx + o[0];
-    return [cx + (x - cx) * sx, cy + (y - cy) * sy];
+    const x = cx + (pts[k][0] - cx) * sx + fdx + o[0];
+    const y = cy + (pts[k][1] - cy) * sy + fdy + o[1] + drop * (dw ? dw[k] : 1);
+    return [x, y];
   };
   ctx.beginPath();
   if (sh.closed) {
