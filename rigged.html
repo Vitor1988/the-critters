@@ -145,7 +145,24 @@ function loadCritter(id) {
     } else if (sh.fill === pal.teeth) {
       sh.teethRig = true;
       sh.cx = 0;
+      sh.upperTeeth = c[1] < m.y - 4;
     }
+  }
+
+  if (!model.shapes.some(s => s.holeRig)) {
+    const rngH = mulberry32(hashStr(currentId + ':hole'));
+    const hcx = 0, hcy = m.y - 2, hrx = m.mw * 0.7, hry = m.mh * 0.55;
+    const pts = wobblyCircle(hcx, hcy, hrx, hry, 12, 3, rngH);
+    const hole = {
+      pts, offs: pts.map(() => [0, 0]), closed: true, lw: 2, alpha: 1, intensity: 8,
+      fill: pal.line, stroke: null, role: 'mouth', holeRig: true,
+      cx: hcx, cy: hcy, baseCx: hcx, baseCy: hcy,
+      basePts: pts.map(p => [p[0], p[1]]),
+      baseRx: Math.max(2, hrx), baseRy: Math.max(2, hry),
+      holeH: Math.max(4, hry * 2), sx: 1, sy: 1, ox: 0, oy: 0
+    };
+    const idx = model.shapes.findIndex(s => s.role === 'mouth' || s.role === 'mouthRig');
+    model.shapes.splice(idx < 0 ? model.shapes.length : idx, 0, hole);
   }
 
   titleEl.textContent = 'the critter @' + id + ' — rigged';
@@ -371,7 +388,7 @@ function frame(now) {
       } else if (sh.teethRig) {
         sh.sx = mW * (1 - sig.pucker * 0.3);
         sh.ox = jawShift;
-        sh.oy = jawDropT;
+        sh.oy = sh.upperTeeth ? jawDropT * 0.1 : jawDropT;
       } else if (sh.holeRig) {
         const RX = sh.baseRx * mW * (1 - sig.pucker * 0.5);
         const RY = Math.max(1.5, sh.baseRy * (0.12 + 1.5 * sig.mouth) * (1 + sig.funnel * 0.35));
