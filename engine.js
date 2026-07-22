@@ -408,7 +408,9 @@ function buildModel(id, opts) {
     extras.push('eyepatch');
   }
 
+  let glassesStart = -1;
   if (sp.name === 'owl' && t.wild >= 30 && eyeCount >= 2 && eyepatchEye < 0) {
+    glassesStart = shapes.length;
     const [lx, ly, lr] = eyePos[0], [rx2, ry2, rr] = eyePos[1];
     for (const [ex, ey, er] of [eyePos[0], eyePos[1]]) {
       addShape(shapes, wobblyCircle(ex, ey, er * 1.3, er * 1.3, 12, 2.5, rng), { fill: null, stroke: pal.line, lw: 3 }, rng, 6);
@@ -416,8 +418,12 @@ function buildModel(id, opts) {
     addShape(shapes, [[lx + lr * 1.3, ly], [rx2 - rr * 1.3, ry2]], { fill: null, stroke: pal.line, closed: false, lw: 3 }, rng, 6);
     extras.push('glasses');
   }
+  const glassesEnd = glassesStart < 0 ? -1 : shapes.length;
 
-  for (let k = eyeStart; k < shapes.length; k++) shapes[k].role = 'eye';
+  for (let k = eyeStart; k < shapes.length; k++) {
+    if (glassesStart >= 0 && k >= glassesStart && k < glassesEnd) { shapes[k].role = 'glasses'; continue; }
+    shapes[k].role = 'eye';
+  }
 
   const snoutMouth = sp.nose === 'snout';
   const myBase = snoutMouth ? ry * 0.66 : ry * 0.52;
