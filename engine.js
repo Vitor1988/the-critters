@@ -196,10 +196,6 @@ function randomId() {
   return s;
 }
 
-let model = null;
-let currentId = '';
-let pal = null;
-
 function addShape(shapes, pts, opts, rng, intensity) {
   const offs = pts.map(() => [0, 0]);
   shapes.push(Object.assign({ pts, offs, closed: true, lw: 3.5, alpha: 1, intensity: intensity || 5 }, opts));
@@ -212,7 +208,7 @@ function buildModel(id, opts) {
   const t = parseId(id);
   const rng = mulberry32(hashStr(id));
   const sp = SPECIES[t.species];
-  pal = PALETTES[t.palette];
+  const pal = PALETTES[t.palette];
   const face = pal.face[Math.floor(rng() * pal.face.length)];
   const ringColor = pal.mono ? pal.line : (colorDist(pal.horn, face) < 60 ? pal.line : pal.horn);
   const shapes = [];
