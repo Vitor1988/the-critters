@@ -106,7 +106,7 @@ function loadCritter(id) {
       openMouthShapes.push(rig);
     } else if (sh.fill === pal.mouth) {
       sh.alphaMul = 0;
-    } else if (sh.fill === pal.line) {
+    } else if (sh.fill === pal.line || m.style === 'open' || m.style === 'grin' || m.style === 'o') {
       sh.cx = c[0]; sh.cy = c[1];
       sh.holeRig = true;
       openMouthShapes.push(sh);
@@ -277,6 +277,7 @@ function frame(now) {
     for (const b of eyeBinds) {
       const bl = b.side === 'L' ? sig.blinkL : b.side === 'R' ? sig.blinkR : (sig.blinkL + sig.blinkR) / 2;
       b.sh.sy = bl;
+      if (b.sh.follow) b.sh.follow.blinkScale = bl;
     }
     for (const sh of model.shapes) {
       if (sh.role === 'mouthRig') {
@@ -291,8 +292,9 @@ function frame(now) {
     for (const sh of model.shapes) {
       if (sh.follow) {
         const f = sh.follow;
-        f.tx = sig.gx * f.max * 1.3;
-        f.ty = sig.gy * f.max * 1.3;
+        const bsc = f.blinkScale === undefined ? 1 : f.blinkScale;
+        f.tx = sig.gx * f.max * 1.3 * bsc;
+        f.ty = sig.gy * f.max * 1.3 * bsc;
         f.dx = (f.dx || 0) + (f.tx - (f.dx || 0)) * 0.2;
         f.dy = (f.dy || 0) + (f.ty - (f.dy || 0)) * 0.2;
       }
