@@ -69,6 +69,7 @@ function centroid(pts) {
 function loadCritter(id) {
   currentId = id;
   model = buildModel(id, { rig: true });
+  for (const sh of model.shapes) sh.intensity = 5;
   pal = model.palette;
   document.body.style.background = pal.bg;
   window.location.hash = id;
