@@ -328,7 +328,7 @@ function buildModel(id, opts) {
       const pts = [[ex - 13, by + 4], [ex + s * 4, by - 20 * hs], [ex + s * 12, by - 40 * hs], tip,
                    [ex + s * 16, by - 34 * hs], [ex + s * 10, by - 14 * hs], [ex + 13, by + 4]]
         .map(([x, y]) => [x + (rng() - .5) * 4, y + (rng() - .5) * 4]);
-      addShape(shapes, pts, { fill: pal.horn, stroke: pal.line }, rng, 8);
+      addShape(shapes, pts, { fill: pal.horn, stroke: pal.line }, rng, 5);
     }
   } else if (topStyle === 'antenna') {
     const n = 1 + Math.floor(rng() * 2);
