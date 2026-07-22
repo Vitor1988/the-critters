@@ -186,7 +186,7 @@ function processLandmarks(lm, bs) {
   }
 
   if (bs) {
-    const jaw = clamp((bs.jawOpen - 0.02) * 1.3, 0, 1);
+    const jaw = clamp((bs.jawOpen - 0.03) * 1.05, 0, 1);
     sig.mouth += (jaw - sig.mouth) * (jaw > sig.mouth ? 0.45 : 0.28);
     const smile = (bs.mouthSmileLeft + bs.mouthSmileRight) / 2;
     const frown = (bs.mouthFrownLeft + bs.mouthFrownRight) / 2;
