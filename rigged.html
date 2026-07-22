@@ -155,7 +155,12 @@ const mouse = { x: 0, y: 0, down: false };
 window.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
 window.addEventListener('mousedown', () => mouse.down = true);
 window.addEventListener('mouseup', () => mouse.down = false);
-window.addEventListener('keydown', e => { if (e.keyCode === 76) loadCritter(randomId()); else if (e.keyCode === 83) savePng(); });
+let debugMode = false;
+window.addEventListener('keydown', e => {
+  if (e.keyCode === 76) loadCritter(randomId());
+  else if (e.keyCode === 83) savePng();
+  else if (e.keyCode === 68) { debugMode = !debugMode; if (!debugMode) setStatus(tracking ? 'tracking — express yourself' : 'mouse mode'); }
+});
 
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -212,8 +217,8 @@ function processLandmarks(lm, bs) {
     const pucker = (bs.mouthPucker + bs.mouthFunnel) / 2;
     const stretch = (bs.mouthStretchLeft + bs.mouthStretchRight) / 2;
     sig.mouthW += (clamp((stretch - pucker) * 0.8, -0.5, 0.5) - sig.mouthW) * 0.3;
-    sig.blinkL += (clamp(1 - bs.eyeBlinkRight * 1.15, 0.03, 1) - sig.blinkL) * 0.5;
-    sig.blinkR += (clamp(1 - bs.eyeBlinkLeft * 1.15, 0.03, 1) - sig.blinkR) * 0.5;
+    sig.blinkL += (clamp(1 - bs.eyeBlinkRight * 1.6, 0.02, 1) - sig.blinkL) * 0.5;
+    sig.blinkR += (clamp(1 - bs.eyeBlinkLeft * 1.6, 0.02, 1) - sig.blinkR) * 0.5;
     const bgx = clamp(-(bs.eyeLookOutLeft + bs.eyeLookInRight - bs.eyeLookInLeft - bs.eyeLookOutRight) * 1.3, -1, 1);
     const bgy = clamp((bs.eyeLookDownLeft + bs.eyeLookDownRight - bs.eyeLookUpLeft - bs.eyeLookUpRight) * 1.1, -1, 1);
     sig.gx += (bgx - sig.gx) * 0.35;
@@ -301,6 +306,13 @@ function frame(now) {
     const tb = blinkTimer < 8 ? 0.05 : 1;
     sig.blinkL += (tb - sig.blinkL) * 0.5;
     sig.blinkR += (tb - sig.blinkR) * 0.5;
+  }
+
+  if (debugMode) {
+    descEl.textContent = 'blinkL ' + sig.blinkL.toFixed(2) + ' · blinkR ' + sig.blinkR.toFixed(2) +
+      ' · jaw ' + sig.mouth.toFixed(2) + ' · yaw ' + sig.yaw.toFixed(2) + ' · pitch ' + sig.pitch.toFixed(2) +
+      ' · roll ' + sig.roll.toFixed(2) + ' · gaze ' + sig.gx.toFixed(2) + ',' + sig.gy.toFixed(2) +
+      ' · joy ' + sig.joy.toFixed(2) + ' · wide ' + sig.wide.toFixed(2);
   }
 
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
