@@ -115,6 +115,7 @@ function loadCritter(id) {
     const c = centroid(sh.pts);
     if (!sh.closed) {
       const rig = {
+        half: sh.pts.length,
         pts: sh.pts.concat(sh.pts.slice().reverse()),
         offs: sh.pts.concat(sh.pts).map(() => [0, 0]),
         closed: true, lw: sh.lw, alpha: 1, intensity: sh.intensity,
@@ -147,22 +148,6 @@ function loadCritter(id) {
       sh.cx = 0;
       sh.upperTeeth = c[1] < m.y - 4;
     }
-  }
-
-  if (!model.shapes.some(s => s.holeRig)) {
-    const rngH = mulberry32(hashStr(currentId + ':hole'));
-    const hcx = 0, hcy = m.y - 2, hrx = m.mw * 0.7, hry = m.mh * 0.55;
-    const pts = wobblyCircle(hcx, hcy, hrx, hry, 12, 3, rngH);
-    const hole = {
-      pts, offs: pts.map(() => [0, 0]), closed: true, lw: 2, alpha: 1, intensity: 8,
-      fill: pal.line, stroke: null, role: 'mouth', holeRig: true,
-      cx: hcx, cy: hcy, baseCx: hcx, baseCy: hcy,
-      basePts: pts.map(p => [p[0], p[1]]),
-      baseRx: Math.max(2, hrx), baseRy: Math.max(2, hry),
-      holeH: Math.max(4, hry * 2), sx: 1, sy: 1, ox: 0, oy: 0
-    };
-    const idx = model.shapes.findIndex(s => s.role === 'mouth' || s.role === 'mouthRig');
-    model.shapes.splice(idx < 0 ? model.shapes.length : idx, 0, hole);
   }
 
   titleEl.textContent = 'the critter @' + id + ' — rigged';
@@ -374,15 +359,18 @@ function frame(now) {
     const jawDropT = (ry0 - ryMin0) * 0.7;
     for (const sh of model.shapes) {
       if (sh.role === 'mouthRig') {
-        sh.drop = sig.mouth * model.dropCap;
-        sh.sx = mW;
+        sh.drop = 0;
+        sh.sx = mW * (1 - sig.pucker * 0.45);
         sh.ox = jawShift;
         if (sh.basePts) {
+          const n = sh.half;
+          const openH = sig.mouth * model.dropCap * 0.9 * (1 + sig.funnel * 0.35 + sig.pucker * 0.15);
           for (let i = 0; i < sh.pts.length; i++) {
-            const bp = sh.basePts[i];
-            const w = Math.min(1, Math.abs(bp[0] - sh.cx) / sh.halfW);
+            const bp = sh.basePts[i < n ? i : 2 * n - 1 - i];
+            const nx = Math.max(-1, Math.min(1, (bp[0] - sh.cx) / sh.halfW));
+            const prof = Math.sqrt(Math.max(0, 1 - nx * nx));
             sh.pts[i][0] = bp[0];
-            sh.pts[i][1] = bp[1] - smileK * 8 * w * w;
+            sh.pts[i][1] = bp[1] + openH * prof * (i < n ? -0.25 : 1) - smileK * 7 * nx * nx;
           }
         }
       } else if (sh.teethRig) {
