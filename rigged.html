@@ -141,7 +141,11 @@ function loadCritter(id) {
   if (nonClosed.length) {
     nonClosed.sort((a, b) => a.c[0] - b.c[0]);
     const topPts = [];
-    for (const { sh } of nonClosed) for (const p of sh.pts) topPts.push([p[0], p[1]]);
+    for (const { sh } of nonClosed) {
+      let sp = sh.pts;
+      if (sp[0][0] > sp[sp.length - 1][0]) sp = sp.slice().reverse();
+      for (const p of sp) topPts.push([p[0], p[1]]);
+    }
     const cAll = centroid(topPts);
     const rig = {
       half: topPts.length,
