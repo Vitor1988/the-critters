@@ -130,6 +130,9 @@ function loadCritter(id) {
     } else if (sh.fill === pal.line || m.style === 'open' || m.style === 'grin' || m.style === 'o') {
       sh.cx = c[0]; sh.cy = holeCy;
       sh.holeRig = true;
+      let hMin = Infinity, hMax = -Infinity;
+      for (const p of sh.pts) { if (p[1] < hMin) hMin = p[1]; if (p[1] > hMax) hMax = p[1]; }
+      sh.holeH = Math.max(4, hMax - hMin);
       openMouthShapes.push(sh);
     } else if (sh.fill === pal.teeth) {
       sh.teethRig = true;
@@ -142,7 +145,7 @@ function loadCritter(id) {
   titleEl.style.color = fg; descEl.style.color = fg;
 }
 
-const sig = { blinkL: 1, blinkR: 1, mouth: 0, mouthW: 0, expr: 0, yaw: 0, pitch: 0, roll: 0, gx: 0, gy: 0, hx: 0, hy: 0, joy: 0, sad: 0, surprise: 0, anger: 0, wide: 0 };
+const sig = { blinkL: 1, blinkR: 1, mouth: 0, mouthW: 0, expr: 0, yaw: 0, pitch: 0, roll: 0, gx: 0, gy: 0, hx: 0, hy: 0, joy: 0, sad: 0, surprise: 0, anger: 0, wide: 0, pucker: 0, stretch: 0, jawX: 0 };
 let calib = null, calibFrames = 0, calibAcc = { ear: 0, mouth: 0, yaw: 0, pitch: 0, roll: 0, hx: 0, hy: 0, mouthW: 0 };
 let tracking = false;
 const mouse = { x: 0, y: 0, down: false };
@@ -194,7 +197,10 @@ function processLandmarks(lm, bs) {
 
   if (bs) {
     const jaw = clamp((bs.jawOpen - 0.03) * 1.05, 0, 1);
-    sig.mouth += (jaw - sig.mouth) * (jaw > sig.mouth ? 0.45 : 0.28);
+    const press = clamp(bs.mouthClose + (bs.mouthPressLeft + bs.mouthPressRight) / 2, 0, 1);
+    const pucker = clamp(bs.mouthPucker + bs.mouthFunnel * 0.8, 0, 1);
+    const openT = jaw * (1 - 0.6 * press) * (1 - 0.35 * pucker);
+    sig.mouth += (openT - sig.mouth) * (openT > sig.mouth ? 0.55 : 0.3);
     const smile = (bs.mouthSmileLeft + bs.mouthSmileRight) / 2;
     const frown = (bs.mouthFrownLeft + bs.mouthFrownRight) / 2;
     sig.expr += (clamp(smile - frown, -1, 1) - sig.expr) * 0.25;
@@ -208,9 +214,11 @@ function processLandmarks(lm, bs) {
     sig.surprise += (clamp(wide * 0.9 + browUp * 0.9, 0, 1) - sig.surprise) * 0.3;
     sig.anger += (clamp((bs.browDownLeft + bs.browDownRight) * 0.9, 0, 1) - sig.anger) * 0.3;
     sig.wide += (clamp(wide * 1.5, 0, 1) - sig.wide) * 0.3;
-    const pucker = (bs.mouthPucker + bs.mouthFunnel) / 2;
-    const stretch = (bs.mouthStretchLeft + bs.mouthStretchRight) / 2;
+    const stretch = clamp((bs.mouthStretchLeft + bs.mouthStretchRight) / 2, 0, 1);
+    sig.pucker += (pucker - sig.pucker) * 0.4;
+    sig.stretch += (stretch - sig.stretch) * 0.4;
     sig.mouthW += (clamp((stretch - pucker) * 0.8, -0.5, 0.5) - sig.mouthW) * 0.3;
+    sig.jawX += (clamp((bs.mouthRight - bs.mouthLeft) + (bs.jawRight - bs.jawLeft) * 0.6, -1, 1) - sig.jawX) * 0.35;
     sig.blinkL += (clamp(1 - bs.eyeBlinkRight * 1.6, 0.02, 1) - sig.blinkL) * 0.5;
     sig.blinkR += (clamp(1 - bs.eyeBlinkLeft * 1.6, 0.02, 1) - sig.blinkR) * 0.5;
     const bgx = clamp(-(bs.eyeLookOutLeft + bs.eyeLookInRight - bs.eyeLookInLeft - bs.eyeLookOutRight) * 1.3, -1, 1);
@@ -306,7 +314,8 @@ function frame(now) {
     descEl.textContent = 'blinkL ' + sig.blinkL.toFixed(2) + ' · blinkR ' + sig.blinkR.toFixed(2) +
       ' · jaw ' + sig.mouth.toFixed(2) + ' · yaw ' + sig.yaw.toFixed(2) + ' · pitch ' + sig.pitch.toFixed(2) +
       ' · roll ' + sig.roll.toFixed(2) + ' · gaze ' + sig.gx.toFixed(2) + ',' + sig.gy.toFixed(2) +
-      ' · joy ' + sig.joy.toFixed(2) + ' · wide ' + sig.wide.toFixed(2);
+      ' · joy ' + sig.joy.toFixed(2) + ' · wide ' + sig.wide.toFixed(2) +
+      ' · pk ' + sig.pucker.toFixed(2) + ' · st ' + sig.stretch.toFixed(2) + ' · jx ' + sig.jawX.toFixed(2);
   }
 
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
@@ -329,15 +338,24 @@ function frame(now) {
       br.sh.oy = -sig.surprise * 14 + sig.anger * 7 - sig.joy * 2;
       br.sh.drop = (sig.anger - sig.sad) * 10 * br.dir;
     }
+    const mW = 1 + sig.mouthW * 0.4 + Math.max(0, sig.expr) * 0.08;
+    const holeH = (model.shapes.find(s => s.holeRig) || {}).holeH || 14;
+    const jawShift = sig.jawX * 7;
     for (const sh of model.shapes) {
       if (sh.role === 'mouthRig') {
         sh.drop = sig.mouth * model.dropCap;
-        sh.sx = 1 + sig.mouthW * 0.4;
+        sh.sx = mW;
+        sh.ox = jawShift;
       } else if (sh.teethRig) {
-        sh.sx = 1 + sig.mouthW * 0.4;
+        sh.sx = mW;
+        sh.ox = jawShift;
+        sh.oy = sig.mouth * holeH * 0.55;
       } else if (sh.holeRig) {
-        sh.sy = 0.12 + 1.05 * sig.mouth;
-        sh.sx = 1 + sig.mouthW * 0.4;
+        const holeSy = (0.12 + 1.05 * sig.mouth) * (1 + sig.pucker * 0.35);
+        sh.sy = holeSy;
+        sh.sx = mW * (1 - sig.pucker * 0.3);
+        sh.oy = (holeSy - 1) * sh.holeH * 0.55;
+        sh.ox = jawShift;
       }
     }
     const env = { drx: sig.yaw * 0.5, dry: -sig.pitch * 0.6, angle: Math.atan2(sig.yaw, -sig.pitch + 0.001), Ui: 2 + sig.mouth * 18, frozen: false };
