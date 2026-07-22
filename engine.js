@@ -317,6 +317,7 @@ function buildModel(id, opts) {
       { fill: pal.ear, stroke: null, alpha: 0.85 }, rng, 5);
   }
 
+  const topStart = shapes.length;
   const topStyle = hatWorn ? 'none' : TOP_STYLES[t.top];
   if (topStyle === 'horns') {
     for (const s of [-1, 1]) {
@@ -350,6 +351,7 @@ function buildModel(id, opts) {
   } else if (topStyle === 'halo') {
     addShape(shapes, wobblyCircle(topX, topY - 34, 30, 8, 12, 3, rng), { fill: null, stroke: pal.horn, lw: 4.5 }, rng, 12);
   }
+  for (let k = topStart; k < shapes.length; k++) shapes[k].role = 'top';
 
   const eyeCount = t.eyes + 1;
   let eyeStyle = EYE_STYLES[t.eyeStyle];
@@ -618,20 +620,20 @@ function buildModel(id, opts) {
     const capH = Math.max(30, ry * 0.45 + 12);
     const dome = wobblyArc(topX, hy + 4, hw * 0.98, capH, Math.PI, Math.PI * 2, 12, 5, rng)
       .map(([x, y]) => rotatePt(x, y, topX, hy, tilt));
-    addShape(shapes, dome, { fill: pal.horn, stroke: pal.line }, rng, 8);
+    addShape(shapes, dome, { fill: pal.horn, stroke: pal.line, role: 'top' }, rng, 8);
     const brim = wobblyCircle(topX + hw * 0.25, hy + 4, hw * 1.2, 10, 12, 4, rng, tilt)
       .map(([x, y]) => rotatePt(x, y, topX, hy, tilt));
-    addShape(shapes, brim, { fill: pal.horn, stroke: pal.line }, rng, 8);
+    addShape(shapes, brim, { fill: pal.horn, stroke: pal.line, role: 'top' }, rng, 8);
     extras.push('hat');
   } else if (acc === 'beanie') {
     const bandY = topY * 0.55;
     const hw = widthAt(headPts, bandY, ry * 0.25) || earRx;
     const capH = Math.max(26, ry * 0.42 + 10);
     addShape(shapes, wobblyArc(topX, bandY + 6, hw * 0.98, capH, Math.PI, Math.PI * 2, 12, 5, rng),
-      { fill: pal.horn, stroke: pal.line }, rng, 8);
+      { fill: pal.horn, stroke: pal.line, role: 'top' }, rng, 8);
     addShape(shapes, wobblyPoly([[topX - hw, bandY + 2], [topX + hw, bandY + 2], [topX + hw, bandY + 16], [topX - hw, bandY + 16]], 4, 3, rng),
-      { fill: pal.ear, stroke: pal.line, lw: 2.5 }, rng, 8);
-    addShape(shapes, wobblyCircle(topX, bandY + 6 - capH - 4, 9, 9, 8, 3, rng), { fill: pal.ear, stroke: pal.line, lw: 2 }, rng, 10);
+      { fill: pal.ear, stroke: pal.line, lw: 2.5, role: 'top' }, rng, 8);
+    addShape(shapes, wobblyCircle(topX, bandY + 6 - capH - 4, 9, 9, 8, 3, rng), { fill: pal.ear, stroke: pal.line, lw: 2, role: 'top' }, rng, 10);
     extras.push('beanie');
   }
 
@@ -639,13 +641,13 @@ function buildModel(id, opts) {
     const cy = topY * 0.88, cw = 30;
     const verts = [[-cw, cy + 12], [-cw, cy - 8], [-cw * 0.5, cy + 2], [0, cy - 16], [cw * 0.5, cy + 2], [cw, cy - 8], [cw, cy + 12]]
       .map(([x, y]) => [x + topX, y]);
-    addShape(shapes, wobblyPoly(verts, 2, 2.5, rng), { fill: pal.horn, stroke: pal.line, lw: 2.5 }, rng, 9);
+    addShape(shapes, wobblyPoly(verts, 2, 2.5, rng), { fill: pal.horn, stroke: pal.line, lw: 2.5, role: 'top' }, rng, 9);
     extras.push('crown');
   }
 
   if (!hatWorn && sp.name === 'mouse' && t.wild >= 32) {
     const cy = topY * 0.85;
-    addShape(shapes, wobblyPoly([[-24, cy + 10], [26, cy + 4], [-16, cy - 22]].map(([x, y]) => [x + topX, y]), 3, 3, rng), { fill: pal.horn, stroke: pal.line, lw: 2.5 }, rng, 9);
+    addShape(shapes, wobblyPoly([[-24, cy + 10], [26, cy + 4], [-16, cy - 22]].map(([x, y]) => [x + topX, y]), 3, 3, rng), { fill: pal.horn, stroke: pal.line, lw: 2.5, role: 'top' }, rng, 9);
     for (let k = 0; k < 2; k++) {
       addShape(shapes, wobblyCircle(topX - 6 + k * 14, cy - 4 + k * 4, 3.5, 3.5, 6, 1.5, rng), { fill: pal.bg, stroke: null }, rng, 9);
     }

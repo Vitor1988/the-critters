@@ -55,6 +55,7 @@ let model = null, pal = null, currentId = '';
 let eyeBinds = [];
 let openMouthShapes = [];
 let browRigs = [];
+let topShapes = [];
 
 function luminance(hex) {
   const r = parseInt(hex.substr(1, 2), 16), g = parseInt(hex.substr(3, 2), 16), b = parseInt(hex.substr(5, 2), 16);
@@ -76,7 +77,12 @@ function loadCritter(id) {
   window.location.hash = id;
 
   eyeBinds = [];
+  topShapes = [];
   for (const sh of model.shapes) {
+    if (sh.role === 'top') {
+      sh.topY0 = sh.pts.reduce((a, p) => a + p[1], 0) / sh.pts.length;
+      topShapes.push(sh);
+    }
     if (sh.role !== 'eye') continue;
     const c = centroid(sh.pts);
     let best = 0, bestD = 1e9;
@@ -316,6 +322,9 @@ function frame(now) {
     for (const br of browRigs) {
       br.sh.oy = -sig.surprise * 14 + sig.anger * 7 - sig.joy * 2;
       br.sh.drop = (sig.anger - sig.sad) * 10 * br.dir;
+    }
+    for (const sh of topShapes) {
+      sh.oy = -sig.pitch * 0.45 * Math.max(0, -sh.topY0);
     }
     for (const sh of model.shapes) {
       if (sh.role === 'mouthRig') {
