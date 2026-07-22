@@ -90,6 +90,11 @@ function loadCritter(id) {
   const m = model.mouth;
   model.dropCap = Math.max(12, model.ry * 0.95 - m.y - 8);
   openMouthShapes = [];
+  let holeCy = m.y;
+  for (const sh of model.shapes.filter(s => s.role === 'mouth' && s.closed && s.fill === pal.line)) {
+    holeCy = centroid(sh.pts)[1];
+    break;
+  }
   for (const sh of model.shapes.filter(s => s.role === 'mouth')) {
     const c = centroid(sh.pts);
     if (!sh.closed) {
@@ -107,7 +112,7 @@ function loadCritter(id) {
     } else if (sh.fill === pal.mouth) {
       sh.alphaMul = 0;
     } else if (sh.fill === pal.line || m.style === 'open' || m.style === 'grin' || m.style === 'o') {
-      sh.cx = c[0]; sh.cy = c[1];
+      sh.cx = c[0]; sh.cy = holeCy;
       sh.holeRig = true;
       openMouthShapes.push(sh);
     }
