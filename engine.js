@@ -47,7 +47,7 @@ const EYE_STYLES = ['dot', 'ball', 'dead', 'chameleon', 'lazy', 'star', 'closed'
 const MOUTH_STYLES = ['smile', 'chill', 'mad', 'open', 'fangs', 'tongue', 'w', 'zigzag', 'o', 'grin', 'smirk'];
 const TOP_STYLES = ['none', 'horns', 'antenna', 'mohawk', 'halo'];
 const PATTERNS = ['none', 'stripes', 'spots', 'mask', 'patch'];
-const ACCESSORIES = ['none', 'blush', 'brows', 'whiskers', 'scar', 'eyepatch', 'piercing', 'nosering', 'hat', 'beanie', 'earring'];
+const ACCESSORIES = ['none', 'blush', 'whiskers', 'scar', 'eyepatch', 'piercing', 'nosering', 'hat', 'beanie', 'earring'];
 
 const W_PALETTE = [14, 10, 10, 10, 10, 9, 10, 10, 9, 8];
 const W_HEAD    = [16, 10, 10, 7, 6, 7, 6, 5, 5, 5, 5, 3, 3, 2, 3, 6, 5, 5, 4, 4];
@@ -56,7 +56,7 @@ const W_EYES    = [20, 16, 4, 6, 10, 6, 12, 8, 10, 8];
 const W_MOUTH   = [16, 10, 8, 9, 7, 8, 8, 6, 5, 10, 13];
 const W_TOP     = [55, 14, 11, 10, 10];
 const W_PATTERN = [55, 11, 11, 11, 12];
-const W_ACC     = [21, 12, 10, 10, 7, 7, 7, 6, 6, 5, 9];
+const W_ACC     = [21, 12, 10, 7, 7, 7, 6, 6, 5, 9];
 
 function pickW(v, weights) {
   let total = 0;
@@ -545,13 +545,6 @@ function buildModel(id, opts) {
     for (const s of [-1, 1]) {
       addShape(shapes, wobblyCircle(s * mouthRx * 0.72, myBase - ry * 0.22, 11 + rng() * 4, 7 + rng() * 3, 8, 2.5, rng),
         { fill: pal.mouth, stroke: null, alpha: 0.55 }, rng, 3);
-    }
-  } else if (acc === 'brows' && eyePos.length && eyeStyle !== 'closed') {
-    const anger = rng() * 0.5 - 0.25;
-    for (const [ex, ey] of eyePos.slice(0, 2)) {
-      const s = Math.sign(ex) || 1;
-      addShape(shapes, [[ex - eyeR * 0.9, ey - eyeR * 1.7 - s * anger * 20], [ex + eyeR * 0.9, ey - eyeR * 1.5 + s * anger * 20]],
-        { fill: null, stroke: pal.line, closed: false, lw: 4 }, rng, 8);
     }
   } else if (acc === 'whiskers' && !sp.beak) {
     for (const s of [-1, 1]) {
