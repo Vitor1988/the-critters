@@ -105,7 +105,7 @@ function loadCritter(id) {
   }
 
   const m = model.mouth;
-  model.dropCap = Math.max(14, model.ry * 1.02 - m.y - 4);
+  model.dropCap = Math.max(14, model.botY * 1.02 - m.y - 4);
   openMouthShapes = [];
   let holeCy = m.y;
   for (const sh of model.shapes.filter(s => s.role === 'mouth' && s.closed && s.fill === pal.line)) {

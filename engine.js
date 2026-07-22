@@ -217,9 +217,15 @@ function buildModel(id, opts) {
   const rx = Math.max(...headPts.map(p => Math.abs(p[0])));
   const ry = Math.max(...headPts.map(p => Math.abs(p[1])));
   const topY = Math.min(...headPts.map(p => p[1]));
+  const botY = Math.max(...headPts.map(p => p[1]));
+  const topYAt = (x) => {
+    let m = 0;
+    for (const p of headPts) if (Math.abs(p[0] - x) < 16) m = Math.min(m, p[1]);
+    return m || topY;
+  };
   const earRx = widthAt(headPts, topY * 0.7, ry * 0.3) || rx * 0.6;
-  const eyeRx = widthAt(headPts, -ry * 0.18, ry * 0.3) || rx * 0.7;
-  const mouthRx = widthAt(headPts, ry * 0.52, ry * 0.3) || rx * 0.7;
+  const eyeRx = widthAt(headPts, topY * 0.18, ry * 0.3) || rx * 0.7;
+  const mouthRx = widthAt(headPts, botY * 0.52, ry * 0.3) || rx * 0.7;
   const topPts = headPts.filter(p => p[1] < topY * 0.75);
   const topX = topPts.length ? topPts.reduce((sum, p) => sum + p[0], 0) / topPts.length : 0;
   const asymL = 0.65 + rng() * 0.7;
@@ -281,14 +287,14 @@ function buildModel(id, opts) {
   const pattern = PATTERNS[t.pattern];
   if (pattern === 'stripes' && !sp.patches) {
     for (let k = 0; k < 3; k++) {
-      const sy = -ry * (0.42 + k * 0.14);
+      const sy = topY * (0.42 + k * 0.14);
       const w = earRx * (0.52 - k * 0.1);
       addShape(shapes, wobblyArc(0, sy, w, 9, Math.PI * 1.12, Math.PI * 1.88, 8, 3, rng),
         { fill: null, stroke: pal.line, closed: false, lw: 5, alpha: 0.75 }, rng, 5);
     }
     for (const s of [-1, 1]) {
       for (let k = 0; k < 2; k++) {
-        const sy = ry * (0.12 + k * 0.2);
+        const sy = botY * (0.12 + k * 0.2);
         addShape(shapes, wobblyArc(s * mouthRx * 0.9, sy, 16, 6, s > 0 ? -0.9 : Math.PI - 0.9, s > 0 ? 0.9 : Math.PI + 0.9, 6, 2.5, rng),
           { fill: null, stroke: pal.line, closed: false, lw: 4, alpha: 0.75 }, rng, 5);
       }
@@ -298,32 +304,38 @@ function buildModel(id, opts) {
     for (let i = 0; i < n; i++) {
       const s = rng() < 0.5 ? -1 : 1;
       const sx = s * (rx * 0.3 + rng() * rx * 0.45);
-      const sy = -ry * 0.65 + rng() * ry * 0.75;
+      const sy = topY * 0.65 + rng() * (botY * 0.1 - topY * 0.65);
       addShape(shapes, wobblyCircle(sx, sy, 10 + rng() * 14, 8 + rng() * 10, 8, 4, rng, rng() * 3),
         { fill: pal.ear, stroke: null, alpha: 0.45 }, rng, 5);
     }
   } else if (pattern === 'mask' && !sp.patches) {
-    addShape(shapes, wobblyCircle(0, -ry * 0.18, eyeRx * 0.95, ry * 0.3, 14, 5, rng),
+    addShape(shapes, wobblyCircle(0, topY * 0.18, eyeRx * 0.95, ry * 0.3, 14, 5, rng),
       { fill: pal.line, stroke: null, alpha: 0.16 }, rng, 5);
   } else if (pattern === 'patch' && !sp.patches) {
     const s = rng() < 0.5 ? -1 : 1;
-    addShape(shapes, wobblyCircle(s * eyeRx * 0.45, -ry * 0.2, 26 + rng() * 8, 30 + rng() * 8, 10, 5, rng, s * 0.3),
+    addShape(shapes, wobblyCircle(s * eyeRx * 0.45, topY * 0.2, 26 + rng() * 8, 30 + rng() * 8, 10, 5, rng, s * 0.3),
       { fill: pal.ear, stroke: null, alpha: 0.85 }, rng, 5);
   }
 
   const topStyle = hatWorn ? 'none' : TOP_STYLES[t.top];
   if (topStyle === 'horns') {
     for (const s of [-1, 1]) {
-      const ex = s * earRx * 0.45, ey = topY * 0.82;
-      addShape(shapes, wobblyPoly([[ex - 17, ey], [ex + 17, ey], [ex + s * 14, ey - 55]], 3, 5, rng),
-        { fill: pal.horn, stroke: pal.line }, rng, 8);
+      const ex = s * earRx * 0.45;
+      const by = topYAt(ex);
+      const hs = 0.8 + rng() * 0.45;
+      const tip = [ex + s * 24 * hs, by - 58 * hs];
+      const pts = [[ex - 13, by + 4], [ex + s * 4, by - 20 * hs], [ex + s * 12, by - 40 * hs], tip,
+                   [ex + s * 16, by - 34 * hs], [ex + s * 10, by - 14 * hs], [ex + 13, by + 4]]
+        .map(([x, y]) => [x + (rng() - .5) * 4, y + (rng() - .5) * 4]);
+      addShape(shapes, pts, { fill: pal.horn, stroke: pal.line }, rng, 8);
     }
   } else if (topStyle === 'antenna') {
     const n = 1 + Math.floor(rng() * 2);
     for (let k = 0; k < n; k++) {
-      const ex = n === 1 ? 0 : (k === 0 ? -earRx * 0.35 : earRx * 0.35);
-      const top = [ex + (rng() - .5) * 20, topY - 62 - rng() * 20];
-      addShape(shapes, [[ex, topY + 4], [ex + 8, topY - 22], [ex - 6, topY - 42], top], { fill: null, stroke: pal.line, closed: false, lw: 3 }, rng, 11);
+      const ex = n === 1 ? topX : topX + (k === 0 ? -earRx * 0.35 : earRx * 0.35);
+      const by = topYAt(ex);
+      const top = [ex + (rng() - .5) * 20, by - 62 - rng() * 20];
+      addShape(shapes, [[ex, by + 4], [ex + 8, by - 22], [ex - 6, by - 42], top], { fill: null, stroke: pal.line, closed: false, lw: 3 }, rng, 11);
       addShape(shapes, wobblyCircle(top[0], top[1], 10, 10, 8, 3, rng), { fill: pal.horn, stroke: pal.line, lw: 2.5 }, rng, 11);
     }
   } else if (topStyle === 'mohawk') {
@@ -350,7 +362,7 @@ function buildModel(id, opts) {
   const eyepatchEye = acc === 'eyepatch' && eyeCount > 1 && !sp.patches ? Math.floor(rng() * Math.min(2, eyeCount)) : -1;
 
   if (eyepatchEye >= 0) {
-    const [px, py] = [-spread + 2 * spread * eyepatchEye / (eyeCount - 1), -ry * 0.18];
+    const [px, py] = [-spread + 2 * spread * eyepatchEye / (eyeCount - 1), topY * 0.18];
     addShape(shapes, [[-rx * 1.05, py - 26], [0, py - 10], [rx * 1.05, py + 6]],
       { fill: null, stroke: pal.line, closed: false, lw: 6 }, rng, 4);
   }
@@ -358,7 +370,7 @@ function buildModel(id, opts) {
   for (let i = 0; i < eyeCount; i++) {
     const fx = eyeCount === 1 ? 0 : -spread + 2 * spread * i / (eyeCount - 1);
     const ex = fx + (rng() - .5) * 10;
-    const ey = -ry * 0.18 + (rng() - .5) * 14 - (eyeCount > 2 && i % 2 ? 8 : 0);
+    const ey = topY * 0.18 + (rng() - .5) * 14 - (eyeCount > 2 && i % 2 ? 8 : 0);
     let er = eyeR * (t.wild % 5 === 4 ? (i === 0 ? 1.3 : 0.75) : 1);
     if (eyeCount === 1) er = Math.min(er, eyeRx * 0.38);
     eyePos.push([ex, ey, er]);
@@ -427,33 +439,33 @@ function buildModel(id, opts) {
   }
 
   const snoutMouth = sp.nose === 'snout';
-  const myBase = snoutMouth ? ry * 0.66 : ry * 0.52;
+  const myBase = snoutMouth ? botY * 0.66 : botY * 0.52;
 
   if (sp.beak) {
-    addShape(shapes, wobblyPoly([[-sp.beak * 0.55, ry * 0.02], [sp.beak * 0.55, ry * 0.02], [0, ry * 0.02 + sp.beak]], 3, 4, rng),
+    addShape(shapes, wobblyPoly([[-sp.beak * 0.55, botY * 0.02], [sp.beak * 0.55, botY * 0.02], [0, botY * 0.02 + sp.beak]], 3, 4, rng),
       { fill: pal.horn, stroke: pal.line }, rng, 10);
   } else if (sp.nose === 'snout') {
-    addShape(shapes, wobblyCircle(0, ry * 0.34 + noseDy, 27, 17, 10, 3.5, rng), { fill: face, stroke: pal.line, lw: 3 }, rng, 10);
-    addShape(shapes, wobblyPoly([[-10, ry * 0.26 + noseDy], [10, ry * 0.26 + noseDy], [0, ry * 0.26 + noseDy + 11]], 2, 3, rng),
+    addShape(shapes, wobblyCircle(0, botY * 0.34 + noseDy, 27, 17, 10, 3.5, rng), { fill: face, stroke: pal.line, lw: 3 }, rng, 10);
+    addShape(shapes, wobblyPoly([[-10, botY * 0.26 + noseDy], [10, botY * 0.26 + noseDy], [0, botY * 0.26 + noseDy + 11]], 2, 3, rng),
       { fill: pal.nose, stroke: pal.line, lw: 2 }, rng, 10);
   } else if (sp.nose === 'pig') {
-    addShape(shapes, wobblyCircle(0, ry * 0.22 + noseDy, 17, 12, 10, 3, rng), { fill: pal.nose, stroke: pal.line, lw: 2.5 }, rng, 10);
+    addShape(shapes, wobblyCircle(0, botY * 0.22 + noseDy, 17, 12, 10, 3, rng), { fill: pal.nose, stroke: pal.line, lw: 2.5 }, rng, 10);
     for (const s of [-1, 1]) {
-      addShape(shapes, wobblyCircle(s * 7, ry * 0.22 + noseDy, 3, 4, 6, 1.5, rng), { fill: pal.line, stroke: null }, rng, 10);
+      addShape(shapes, wobblyCircle(s * 7, botY * 0.22 + noseDy, 3, 4, 6, 1.5, rng), { fill: pal.line, stroke: null }, rng, 10);
     }
   } else if (sp.nose === 'round') {
-    addShape(shapes, wobblyCircle(0, ry * 0.2 + noseDy, 13, 9, 10, 3, rng), { fill: pal.nose, stroke: pal.line, lw: 2.5 }, rng, 10);
+    addShape(shapes, wobblyCircle(0, botY * 0.2 + noseDy, 13, 9, 10, 3, rng), { fill: pal.nose, stroke: pal.line, lw: 2.5 }, rng, 10);
   } else if (sp.nose === 'dots') {
     for (const s of [-1, 1]) {
-      addShape(shapes, wobblyCircle(s * 9, ry * 0.12 + noseDy, 3.5, 3.5, 6, 1.5, rng), { fill: pal.nose, stroke: pal.line, lw: 1.5 }, rng, 10);
+      addShape(shapes, wobblyCircle(s * 9, botY * 0.12 + noseDy, 3.5, 3.5, 6, 1.5, rng), { fill: pal.nose, stroke: pal.line, lw: 1.5 }, rng, 10);
     }
   } else if (sp.nose === 'tri') {
-    addShape(shapes, wobblyPoly([[-9, ry * 0.14 + noseDy], [9, ry * 0.14 + noseDy], [0, ry * 0.14 + noseDy + 10]], 2, 3, rng),
+    addShape(shapes, wobblyPoly([[-9, botY * 0.14 + noseDy], [9, botY * 0.14 + noseDy], [0, botY * 0.14 + noseDy + 10]], 2, 3, rng),
       { fill: pal.nose, stroke: pal.line, lw: 2 }, rng, 10);
   }
 
   if (acc === 'nosering' && !sp.beak && sp.nose !== 'none' && sp.nose !== 'dots') {
-    const ny = sp.nose === 'snout' ? ry * 0.46 : ry * 0.32;
+    const ny = sp.nose === 'snout' ? botY * 0.46 : botY * 0.32;
     addShape(shapes, wobblyCircle(0, ny, 7, 7, 8, 2, rng), { fill: null, stroke: ringColor, lw: 2.5 }, rng, 10);
     extras.push('nosering');
   }
@@ -543,13 +555,13 @@ function buildModel(id, opts) {
 
   if (acc === 'blush') {
     for (const s of [-1, 1]) {
-      addShape(shapes, wobblyCircle(s * mouthRx * 0.72, myBase - ry * 0.22, 11 + rng() * 4, 7 + rng() * 3, 8, 2.5, rng),
+      addShape(shapes, wobblyCircle(s * mouthRx * 0.72, myBase - botY * 0.22, 11 + rng() * 4, 7 + rng() * 3, 8, 2.5, rng),
         { fill: pal.mouth, stroke: null, alpha: 0.55 }, rng, 5);
     }
   } else if (acc === 'whiskers' && !sp.beak) {
     for (const s of [-1, 1]) {
       for (let k = 0; k < 3; k++) {
-        const wy = myBase - ry * 0.24 + k * 10;
+        const wy = myBase - botY * 0.24 + k * 10;
         const ew = widthAt(headPts, wy, 12) || mouthRx;
         const fan = (k - 1) * 9;
         addShape(shapes, [[s * (ew - 16), wy], [s * (ew + 8), wy + fan * 0.4], [s * (ew + 32), wy + fan]],
@@ -558,7 +570,7 @@ function buildModel(id, opts) {
     }
   } else if (acc === 'scar') {
     const s = rng() < 0.5 ? -1 : 1;
-    const x0 = s * earRx * 0.35, y0 = -ry * 0.55, x1 = s * earRx * 0.6, y1 = -ry * 0.28;
+    const x0 = s * earRx * 0.35, y0 = topY * 0.55, x1 = s * earRx * 0.6, y1 = topY * 0.28;
     addShape(shapes, [[x0, y0], [x1, y1]], { fill: null, stroke: pal.line, closed: false, lw: 2.5 }, rng, 5);
     for (let k = 0; k < 3; k++) {
       const f = 0.2 + k * 0.3;
@@ -567,7 +579,7 @@ function buildModel(id, opts) {
     }
   } else if (acc === 'piercing') {
     const s = rng() < 0.5 ? -1 : 1;
-    const py = ry * 0.18;
+    const py = botY * 0.18;
     const near = headPts.filter(p => Math.abs(p[1] - py) < ry * 0.25);
     const edge = near.length ? (s < 0 ? Math.min(...near.map(p => p[0])) : Math.max(...near.map(p => p[0]))) : s * rx * 0.7;
     const exx = edge - s * 3;
@@ -643,7 +655,7 @@ function buildModel(id, opts) {
     const n = 3 + t.wild % 3;
     for (let i = 0; i < n; i++) {
       const s = rng() < 0.5 ? -1 : 1;
-      addShape(shapes, wobblyCircle(s * rng() * mouthRx * 0.85, ry * (0.1 + rng() * 0.55), 8 + rng() * 10, 6 + rng() * 8, 8, 4, rng, rng() * 3),
+      addShape(shapes, wobblyCircle(s * rng() * mouthRx * 0.85, botY * (0.1 + rng() * 0.55), 8 + rng() * 10, 6 + rng() * 8, 8, 4, rng, rng() * 3),
         { fill: pal.nose, stroke: null, alpha: 0.4 }, rng, 2);
     }
     extras.push('mud');
@@ -654,7 +666,7 @@ function buildModel(id, opts) {
   if (pattern !== 'none' && !sp.patches) traitList.push(pattern);
   if (acc !== 'none' && !['eyepatch', 'piercing', 'nosering', 'hat', 'beanie', 'earring'].includes(acc)) traitList.push(acc);
   for (const e of extras) traitList.push(e);
-  return { shapes, traits: traitList, palette: pal, eyes: eyePos, mouth: { y: my, mw, mh, style: mouthStyle }, face, topY, ry };
+  return { shapes, traits: traitList, palette: pal, eyes: eyePos, mouth: { y: my, mw, mh, style: mouthStyle }, face, topY, botY, ry };
 }
 
 const FRICTION = 0.2;
