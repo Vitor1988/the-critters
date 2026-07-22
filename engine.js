@@ -657,7 +657,7 @@ function buildModel(id, opts) {
   if (pattern !== 'none' && !sp.patches) traitList.push(pattern);
   if (acc !== 'none' && !['eyepatch', 'piercing', 'nosering', 'hat', 'beanie', 'earring'].includes(acc)) traitList.push(acc);
   for (const e of extras) traitList.push(e);
-  return { shapes, traits: traitList, palette: pal, eyes: eyePos, mouth: { y: my, mw, mh }, face, topY, ry };
+  return { shapes, traits: traitList, palette: pal, eyes: eyePos, mouth: { y: my, mw, mh, style: mouthStyle }, face, topY, ry };
 }
 
 const FRICTION = 0.2;
