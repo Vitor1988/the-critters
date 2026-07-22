@@ -122,6 +122,10 @@ function loadCritter(id) {
         drop: 0, dropW: sh.pts.map(() => 0).concat(sh.pts.map(() => 1)),
         cx: c[0], cy: c[1], sx: 1, sy: 1, alphaMul: 1
       };
+      let mwMax = 1;
+      for (const p of rig.pts) mwMax = Math.max(mwMax, Math.abs(p[0] - c[0]));
+      rig.halfW = mwMax;
+      rig.basePts = rig.pts.map(p => [p[0], p[1]]);
       model.shapes.splice(model.shapes.indexOf(sh), 0, rig);
       sh.alphaMul = 0;
       openMouthShapes.push(rig);
@@ -130,9 +134,13 @@ function loadCritter(id) {
     } else if (sh.fill === pal.line || m.style === 'open' || m.style === 'grin' || m.style === 'o') {
       sh.cx = c[0]; sh.cy = holeCy;
       sh.holeRig = true;
-      let hMin = Infinity, hMax = -Infinity;
-      for (const p of sh.pts) { if (p[1] < hMin) hMin = p[1]; if (p[1] > hMax) hMax = p[1]; }
+      let hMin = Infinity, hMax = -Infinity, wMin = Infinity, wMax = -Infinity;
+      for (const p of sh.pts) { if (p[1] < hMin) hMin = p[1]; if (p[1] > hMax) hMax = p[1]; if (p[0] < wMin) wMin = p[0]; if (p[0] > wMax) wMax = p[0]; }
       sh.holeH = Math.max(4, hMax - hMin);
+      sh.basePts = sh.pts.map(p => [p[0], p[1]]);
+      sh.baseCx = c[0]; sh.baseCy = holeCy;
+      sh.baseRx = Math.max(2, (wMax - wMin) / 2);
+      sh.baseRy = Math.max(2, (hMax - hMin) / 2);
       openMouthShapes.push(sh);
     } else if (sh.fill === pal.teeth) {
       sh.teethRig = true;
@@ -145,7 +153,7 @@ function loadCritter(id) {
   titleEl.style.color = fg; descEl.style.color = fg;
 }
 
-const sig = { blinkL: 1, blinkR: 1, mouth: 0, mouthW: 0, expr: 0, yaw: 0, pitch: 0, roll: 0, gx: 0, gy: 0, hx: 0, hy: 0, joy: 0, sad: 0, surprise: 0, anger: 0, wide: 0, pucker: 0, stretch: 0, jawX: 0 };
+const sig = { blinkL: 1, blinkR: 1, mouth: 0, mouthW: 0, expr: 0, yaw: 0, pitch: 0, roll: 0, gx: 0, gy: 0, hx: 0, hy: 0, joy: 0, sad: 0, surprise: 0, anger: 0, wide: 0, pucker: 0, stretch: 0, jawX: 0, funnel: 0 };
 let calib = null, calibFrames = 0, calibAcc = { ear: 0, mouth: 0, yaw: 0, pitch: 0, roll: 0, hx: 0, hy: 0, mouthW: 0 };
 let tracking = false;
 const mouse = { x: 0, y: 0, down: false };
@@ -198,7 +206,8 @@ function processLandmarks(lm, bs) {
   if (bs) {
     const jaw = clamp((bs.jawOpen - 0.03) * 1.05, 0, 1);
     const press = clamp(bs.mouthClose + (bs.mouthPressLeft + bs.mouthPressRight) / 2, 0, 1);
-    const pucker = clamp(bs.mouthPucker + bs.mouthFunnel * 0.8, 0, 1);
+    const pucker = clamp(bs.mouthPucker, 0, 1);
+    sig.funnel += (clamp(bs.mouthFunnel, 0, 1) - sig.funnel) * 0.4;
     const openT = jaw * (1 - 0.6 * press) * (1 - 0.35 * pucker);
     sig.mouth += (openT - sig.mouth) * (openT > sig.mouth ? 0.55 : 0.3);
     const smile = (bs.mouthSmileLeft + bs.mouthSmileRight) / 2;
@@ -315,7 +324,7 @@ function frame(now) {
       ' · jaw ' + sig.mouth.toFixed(2) + ' · yaw ' + sig.yaw.toFixed(2) + ' · pitch ' + sig.pitch.toFixed(2) +
       ' · roll ' + sig.roll.toFixed(2) + ' · gaze ' + sig.gx.toFixed(2) + ',' + sig.gy.toFixed(2) +
       ' · joy ' + sig.joy.toFixed(2) + ' · wide ' + sig.wide.toFixed(2) +
-      ' · pk ' + sig.pucker.toFixed(2) + ' · st ' + sig.stretch.toFixed(2) + ' · jx ' + sig.jawX.toFixed(2);
+      ' · pk ' + sig.pucker.toFixed(2) + ' · fn ' + sig.funnel.toFixed(2) + ' · st ' + sig.stretch.toFixed(2) + ' · jx ' + sig.jawX.toFixed(2);
   }
 
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
@@ -339,23 +348,48 @@ function frame(now) {
       br.sh.drop = (sig.anger - sig.sad) * 10 * br.dir;
     }
     const mW = 1 + sig.mouthW * 0.55 + Math.max(0, sig.expr) * 0.1;
-    const holeH = (model.shapes.find(s => s.holeRig) || {}).holeH || 14;
     const jawShift = sig.jawX * 10;
+    const roundK = Math.min(0.9, sig.funnel * 0.85 + sig.pucker * 0.6);
+    const smileK = clamp(sig.expr, -1, 1);
+    const hole0 = model.shapes.find(s => s.holeRig);
+    const ryMin0 = hole0 ? hole0.baseRy * 0.12 : 1;
+    const ry0 = hole0 ? Math.max(1.5, hole0.baseRy * (0.12 + 1.5 * sig.mouth) * (1 + sig.funnel * 0.35)) : ryMin0;
+    const jawDropT = (ry0 - ryMin0) * 0.7;
     for (const sh of model.shapes) {
       if (sh.role === 'mouthRig') {
         sh.drop = sig.mouth * model.dropCap;
         sh.sx = mW;
         sh.ox = jawShift;
+        if (sh.basePts) {
+          for (let i = 0; i < sh.pts.length; i++) {
+            const bp = sh.basePts[i];
+            const w = Math.min(1, Math.abs(bp[0] - sh.cx) / sh.halfW);
+            sh.pts[i][0] = bp[0];
+            sh.pts[i][1] = bp[1] - smileK * 8 * w * w;
+          }
+        }
       } else if (sh.teethRig) {
-        sh.sx = mW;
+        sh.sx = mW * (1 - sig.pucker * 0.3);
         sh.ox = jawShift;
-        sh.oy = sig.mouth * holeH * 0.8;
+        sh.oy = jawDropT;
       } else if (sh.holeRig) {
-        const holeSy = (0.1 + 1.5 * sig.mouth) * (1 + sig.pucker * 0.5);
-        sh.sy = holeSy;
-        sh.sx = mW * (1 - sig.pucker * 0.45);
-        sh.oy = (holeSy - 1) * sh.holeH * 0.5;
-        sh.ox = jawShift;
+        const RX = sh.baseRx * mW * (1 - sig.pucker * 0.5);
+        const RY = Math.max(1.5, sh.baseRy * (0.12 + 1.5 * sig.mouth) * (1 + sig.funnel * 0.35));
+        const RC = Math.min(RX, RY);
+        const ryMin = sh.baseRy * 0.12;
+        const jawDrop = (RY - ryMin) * 0.7;
+        for (let i = 0; i < sh.pts.length; i++) {
+          const bp = sh.basePts[i];
+          const nx = (bp[0] - sh.baseCx) / sh.baseRx;
+          const ny = (bp[1] - sh.baseCy) / sh.baseRy;
+          const rad = Math.hypot(nx, ny) || 1;
+          const px = nx * RX * (1 - roundK) + (nx / rad) * RC * roundK;
+          const py = ny * RY * (1 - roundK) + (ny / rad) * RC * roundK;
+          const cornerW = Math.abs(nx) * (1 - Math.min(1, Math.abs(ny)));
+          sh.pts[i][0] = sh.baseCx + px + jawShift;
+          sh.pts[i][1] = sh.baseCy + py + jawDrop - smileK * 7 * cornerW;
+        }
+        sh.sx = 1; sh.sy = 1; sh.ox = 0; sh.oy = 0;
       }
     }
     const env = { drx: sig.yaw * 0.5, dry: -sig.pitch * 0.6, angle: Math.atan2(sig.yaw, -sig.pitch + 0.001), Ui: 2 + sig.mouth * 18, frozen: false };
