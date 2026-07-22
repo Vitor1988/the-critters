@@ -116,7 +116,7 @@ function loadCritter(id) {
     if (!sh.closed) {
       const rig = {
         half: sh.pts.length,
-        pts: sh.pts.concat(sh.pts.slice().reverse()),
+        pts: sh.pts.concat(sh.pts.map(p => [p[0], p[1]]).reverse()),
         offs: sh.pts.concat(sh.pts).map(() => [0, 0]),
         closed: true, lw: sh.lw, alpha: 1, intensity: sh.intensity,
         fill: pal.line, stroke: pal.line, role: 'mouthRig',
