@@ -379,21 +379,21 @@ function buildModel(id, opts) {
       addShape(shapes, [[ex + s, ey - s], [ex, ey], [ex - s, ey + s]], { fill: null, stroke: pal.pupil, closed: false, lw: 3.5 }, rng, 12);
     } else if (eyeStyle === 'chameleon') {
       addShape(shapes, wobblyCircle(ex, ey, er * 0.6, 2.5, 8, 2, rng, (rng() - .5) * 1.2),
-        { fill: pal.pupil, stroke: null, follow: { x: ex, y: ey, max: er * 0.5 } }, rng, 4);
+        { fill: pal.pupil, stroke: null, follow: { x: ex, y: ey, max: er * 0.5 } }, rng, 12);
     } else if (eyeStyle === 'star') {
       addShape(shapes, wobblyPoly(starVerts(ex, ey, er * 0.5, er * 0.22, 5, -Math.PI / 2), 1, 2, rng),
-        { fill: pal.pupil, stroke: null, follow: { x: ex, y: ey, max: er * 0.5 } }, rng, 4);
+        { fill: pal.pupil, stroke: null, follow: { x: ex, y: ey, max: er * 0.5 } }, rng, 12);
     } else if (eyeStyle === 'googly') {
       const ga = rng() * 6.283, gd = er * (0.3 + rng() * 0.3);
       addShape(shapes, wobblyCircle(ex + Math.cos(ga) * gd, ey + Math.sin(ga) * gd, er * 0.3, er * 0.3, 10, 2, rng),
-        { fill: pal.pupil, stroke: null }, rng, 10);
+        { fill: pal.pupil, stroke: null }, rng, 12);
     } else if (eyeStyle === 'ring') {
       addShape(shapes, wobblyCircle(ex, ey, er * 0.38, er * 0.38, 10, 2, rng),
-        { fill: null, stroke: pal.pupil, lw: 3, follow: { x: ex, y: ey, max: er * 0.55 } }, rng, 4);
+        { fill: null, stroke: pal.pupil, lw: 3, follow: { x: ex, y: ey, max: er * 0.55 } }, rng, 12);
     } else {
       const pr = eyeStyle === 'dot' ? er * 0.22 : er * 0.45;
       addShape(shapes, wobblyCircle(ex, ey, pr, pr, 10, 2, rng),
-        { fill: pal.pupil, stroke: null, follow: { x: ex, y: ey, max: er * 0.55 } }, rng, 4);
+        { fill: pal.pupil, stroke: null, follow: { x: ex, y: ey, max: er * 0.55 } }, rng, 12);
       if (eyeStyle === 'lazy') {
         addShape(shapes, wobblyArc(ex, ey - er * 0.05, er * 1.05, er * 0.8, Math.PI * 1.08, Math.PI * 1.92, 8, 3, rng),
           { fill: null, stroke: pal.line, closed: false, lw: 4 }, rng, 12);
