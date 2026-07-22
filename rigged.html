@@ -132,6 +132,9 @@ function loadCritter(id) {
       sh.cx = c[0]; sh.cy = holeCy;
       sh.holeRig = true;
       openMouthShapes.push(sh);
+    } else if (sh.fill === pal.teeth) {
+      sh.teethRig = true;
+      sh.cx = 0;
     }
   }
 
@@ -318,6 +321,8 @@ function frame(now) {
     for (const sh of model.shapes) {
       if (sh.role === 'mouthRig') {
         sh.drop = sig.mouth * model.dropCap;
+        sh.sx = 1 + sig.mouthW * 0.4;
+      } else if (sh.teethRig) {
         sh.sx = 1 + sig.mouthW * 0.4;
       } else if (sh.holeRig) {
         sh.sy = 0.15 + 0.85 * sig.mouth;
