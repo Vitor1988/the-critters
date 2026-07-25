@@ -8,7 +8,8 @@ step: os ficheiros são o artefacto.
 - HTML + canvas 2D puro. Zero dependências no gerativo.
 - MediaPipe Face Landmarker (`@mediapipe/tasks-vision`, WASM da CDN) só nas páginas
   rigged/studio. Corre no browser — nada da cara ou da voz sai da máquina.
-- nginx:alpine a servir estático. Container `the-critters`, porta **8092**, `--memory=32m`,
+- nginx:alpine a servir estático. Container `the-critters`, porta **8092** (https na
+  **8443** via `tailscale serve`), `--memory=32m`,
   sem volumes (as preferências vivem no `localStorage` do browser).
 
 ## Ficheiros
@@ -32,7 +33,10 @@ step: os ficheiros são o artefacto.
   versão antiga tratava os dentes como buraco da boca.
 - **A boca não sai da cara por construção**, não por um limite fixo: os budgets de abertura
   são medidos na bind pose, no `buildRig`, a partir do espaço real entre nariz e queixo.
-- **`getUserMedia` não funciona em `file://`** — rigged/studio precisam de http.
+- **A câmara exige contexto seguro** — `https`, `localhost` ou `file://`. Por http num IP
+  o browser nem pede autorização, e o rig cai em modo rato. Daí o `tailscale serve` na
+  8443: **`https://vitors-mac-mini.taile6a561.ts.net:8443/` é o URL a usar**, o
+  `http://100.104.52.12:8092` só serve para o gerativo.
 
 ## Testar sem câmara
 

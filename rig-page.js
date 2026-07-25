@@ -79,6 +79,15 @@ function startRigPage(opts) {
 
   let landmarker = null;
   async function startTracking() {
+    /* O browser só dá a câmara em contexto seguro: https, localhost ou file://. Servido
+       por http num IP (o caso do homelab), o getUserMedia nem chega a pedir autorização —
+       e antes isto aparecia como "no camera", que manda depurar para o lado errado. */
+    if (!window.isSecureContext && !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) {
+      tracking = false;
+      video.style.display = 'none';
+      setStatus('a câmara precisa de https (ou localhost) — nesta ligação o browser nem chega a pedir autorização. modo rato: move = olhar, clica = abrir a boca');
+      return;
+    }
     try {
       const fileset = await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm');
       const mkOpts = del => ({
@@ -104,7 +113,12 @@ function startRigPage(opts) {
     } catch (err) {
       tracking = false;
       video.style.display = 'none';
-      setStatus('no camera / tracker — mouse mode (move = gaze, hold click = open mouth)');
+      const name = err && err.name ? err.name : '';
+      const porque = name === 'NotAllowedError' ? 'autorização da câmara negada'
+        : name === 'NotFoundError' ? 'não há câmara'
+        : name === 'NotReadableError' ? 'a câmara está a ser usada por outra app'
+        : name ? ('erro do tracker: ' + name) : 'sem câmara nem tracker';
+      setStatus(porque + ' — modo rato: move = olhar, clica = abrir a boca');
     }
   }
 

@@ -218,8 +218,12 @@ Para usar como webcam em calls: OBS com Window Capture → Virtual Camera, ou pa
 
 ## Deploy
 
-Site estático — abrir `index.html` ou servir com qualquer static server. **A câmara
-(`getUserMedia`) não funciona em `file://`**, portanto o `rigged`/`studio` precisam de http.
+Site estático — abrir `index.html` ou servir com qualquer static server.
+
+**A câmara exige contexto seguro**: `https`, `localhost`/`127.0.0.1` ou `file://`. Servido
+por http num IP (`http://100.104.52.12:8092`) o browser **nem chega a pedir autorização** e
+o rig fica em modo rato — a página di-lo explicitamente em vez de dizer "no camera".
+Daí o `tailscale serve` a dar https por cima do container.
 
 No homelab corre em container próprio (nginx:alpine, sem build step):
 
