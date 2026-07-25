@@ -15,6 +15,11 @@ html,body{margin:0;padding:0;background:#f2f2f2;overscroll-behavior:none;overflo
 .navigation{margin-top:16px;pointer-events:auto}
 button{border:0;background:#000;color:#fff;padding:14px 18px;margin-right:8px;font-size:14px;font-family:'Source Code Pro',monospace;cursor:pointer}
 button:hover{opacity:.75}
+.favs{margin-top:10px;display:flex;flex-wrap:wrap;gap:6px;pointer-events:auto;max-width:min(620px,calc(100vw - 40px))}
+.fav-chip{background:none;border:2px solid currentColor;color:inherit;padding:5px 9px;margin:0;font-size:12px;font-family:'Source Code Pro',monospace;opacity:.75}
+.fav-chip:hover{opacity:1}
+.fav-chip.on{opacity:1;border-width:3px;font-weight:900}
+@media (max-width:600px){button{padding:10px 12px;font-size:12px;margin-right:6px;margin-bottom:6px}}
 </style>
 </head>
 <body>
@@ -24,9 +29,11 @@ button:hover{opacity:.75}
   <div class="description" id="txt-description"></div>
   <div class="navigation">
     <button id="btn-random">random</button>
+    <button id="btn-fav">♡ favorito</button>
     <button id="btn-save">save png</button>
     <button id="btn-rig">rigged cam</button>
   </div>
+  <div id="favs" class="favs" style="display:none"></div>
 </div>
 <script src="engine.js"></script>
 <script>
@@ -134,7 +141,26 @@ function loadCritter(id) {
   const fg = luminance(pal.bg) >= 128 ? '#000' : '#fff';
   titleEl.style.color = fg; descEl.style.color = fg;
   window.location.hash = id;
+  renderFavs();
 }
+
+const favBtn = document.getElementById('btn-fav');
+const favBar = document.getElementById('favs');
+function renderFavs() {
+  favBtn.textContent = isFav(currentId) ? '♥ favorito' : '♡ favorito';
+  const list = loadFavs();
+  favBar.innerHTML = '';
+  favBar.style.display = list.length ? '' : 'none';
+  for (const id of list) {
+    const b = document.createElement('button');
+    b.className = 'fav-chip' + (id === currentId ? ' on' : '');
+    b.textContent = '@' + id.slice(0, 6);
+    b.title = id;
+    b.addEventListener('click', () => loadCritter(id));
+    favBar.appendChild(b);
+  }
+}
+favBtn.addEventListener('click', () => { toggleFav(currentId); renderFavs(); });
 
 function savePng() {
   canvas.toBlob(blob => {

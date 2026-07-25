@@ -204,6 +204,27 @@ npx serve .        # ou python3 -m http.server
 ```
 Para usar como webcam em calls: OBS com Window Capture → Virtual Camera, ou partilha de janela/tab.
 
+## Favoritos, gravação e paletas
+
+- **favoritos** — botão `♡ favorito` nas três páginas; os IDs ficam em `localStorage`
+  (`critter-favs`, até 60) e aparecem como chips clicáveis por baixo dos botões
+- **gravar vídeo** (`rigged`/`studio`) — `canvas.captureStream(30)` + a faixa de áudio do
+  microfone num só `MediaStream`, gravados por `MediaRecorder` para `.webm` (VP9/Opus).
+  Grava o **avatar**, não a câmara. A permissão do microfone é pedida só ao carregar em
+  gravar, com timeout: se não for respondida em 8s, grava na mesma sem som
+- **paletas** — 18 na lista, mas só as 10 primeiras entram no sorteio. As restantes
+  escolhem-se à mão no studio. É de propósito: o ID mapeia a paleta por pesos acumulados,
+  portanto mexer na tabela do sorteio mudava a cor de todos os critters já gerados
+
 ## Deploy
 
-É um ficheiro estático — abrir `index.html` ou servir com qualquer static server.
+Site estático — abrir `index.html` ou servir com qualquer static server. **A câmara
+(`getUserMedia`) não funciona em `file://`**, portanto o `rigged`/`studio` precisam de http.
+
+No homelab corre em container próprio (nginx:alpine, sem build step):
+
+```bash
+ssh vmini@100.104.52.12 'cd ~/projetos/the-critters && git pull && /usr/local/bin/docker build -t the-critters .'
+ssh vmini@100.104.52.12 '/usr/local/bin/docker stop the-critters; /usr/local/bin/docker rm the-critters; \
+  /usr/local/bin/docker run -d --name the-critters --restart=always -p 8092:80 the-critters'
+```

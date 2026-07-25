@@ -15,6 +15,11 @@ html,body{margin:0;padding:0;background:#f2f2f2;overscroll-behavior:none;overflo
 .navigation{margin-top:16px;pointer-events:auto}
 button{border:0;background:#000;color:#fff;padding:14px 18px;margin-right:8px;font-size:14px;font-family:'Source Code Pro',monospace;cursor:pointer}
 button:hover{opacity:.75}
+.favs{margin-top:10px;display:flex;flex-wrap:wrap;gap:6px;pointer-events:auto;max-width:min(620px,calc(100vw - 40px))}
+.fav-chip{background:none;border:2px solid currentColor;color:inherit;padding:5px 9px;margin:0;font-size:12px;font-family:'Source Code Pro',monospace;opacity:.75}
+.fav-chip:hover{opacity:1}
+.fav-chip.on{opacity:1;border-width:3px;font-weight:900}
+button.rec-on{background:#c0261e}
 #cam{position:fixed;right:16px;bottom:16px;width:180px;border-radius:8px;transform:scaleX(-1);opacity:.85;z-index:1000}
 @media (max-width:600px){
   .content{margin-top:12px;margin-left:12px}
@@ -35,10 +40,13 @@ button:hover{opacity:.75}
   <div class="navigation">
     <button id="btn-random">random</button>
     <button id="btn-recal">recalibrate</button>
+    <button id="btn-fav">♡ favorito</button>
+    <button id="btn-rec">● gravar</button>
     <button id="btn-save">save png</button>
     <button id="btn-back">generative</button>
     <button id="btn-studio">studio</button>
   </div>
+  <div id="favs" class="favs" style="display:none"></div>
 </div>
 <script src="engine.js"></script>
 <script src="rig-page.js"></script>

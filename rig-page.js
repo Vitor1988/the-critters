@@ -47,6 +47,7 @@ function startRigPage(opts) {
     const fg = luminance(api.pal.bg) >= 128 ? '#000' : '#fff';
     titleEl.style.color = fg; descEl.style.color = fg;
     setStatus(tracking ? (cal.ready ? 'tracking — express yourself' : 'calibrating — look neutral at the camera…') : lastStatus);
+    if (api.renderFavs) api.renderFavs();
     if (opts.onLoad) opts.onLoad(api);
   }
 
@@ -168,10 +169,113 @@ function startRigPage(opts) {
   }
   api.savePng = savePng;
 
+  /* ---------- gravação de vídeo: o canvas + o microfone ----------
+     captureStream dá um MediaStream do que está a ser desenhado; junta-se-lhe a faixa
+     de áudio do microfone (permissão pedida só aqui, não no arranque) e o MediaRecorder
+     escreve um webm. Grava o avatar, não a câmara. */
+  const REC_TYPES = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'];
+  let recorder = null, recChunks = [], recAudio = null, recStart = 0, recTimer = 0, statusBeforeRec = '';
+
+  function recSupported() {
+    return typeof MediaRecorder !== 'undefined' && !!canvas.captureStream;
+  }
+
+  async function startRec() {
+    if (!recSupported()) { setStatus('este browser não grava vídeo (sem MediaRecorder)'); return; }
+    let stream;
+    try {
+      stream = canvas.captureStream(30);
+      /* o pedido de microfone fica pendente enquanto a permissão não for respondida —
+         com um await simples a gravação nunca chegava a arrancar e não havia feedback */
+      setStatus('à espera da permissão do microfone…');
+      try {
+        recAudio = await Promise.race([
+          navigator.mediaDevices.getUserMedia({ audio: true }),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000))
+        ]);
+        for (const t of recAudio.getAudioTracks()) stream.addTrack(t);
+      } catch (e) {
+        recAudio = null;   /* sem microfone grava-se à mesma, mudo */
+      }
+      const type = REC_TYPES.find(t => MediaRecorder.isTypeSupported(t)) || '';
+      /* `rec` e não `recorder`: o stopRec limpa a variável, e o onstop dispara depois —
+         com a variável o blob nunca chegava a ser criado */
+      const rec = new MediaRecorder(stream, type ? { mimeType: type, videoBitsPerSecond: 4000000 } : undefined);
+      recChunks = [];
+      rec.ondataavailable = e => { if (e.data && e.data.size) recChunks.push(e.data); };
+      rec.onstop = () => {
+        const blob = new Blob(recChunks, { type: rec.mimeType || 'video/webm' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'critter-' + api.id + (blob.type.indexOf('mp4') >= 0 ? '.mp4' : '.webm');
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+        if (recAudio) { for (const t of recAudio.getTracks()) t.stop(); recAudio = null; }
+      };
+      recorder = rec;
+      rec.start(250);
+      statusBeforeRec = lastStatus;
+      recStart = performance.now();
+      recTimer = setInterval(() => {
+        const s = Math.floor((performance.now() - recStart) / 1000);
+        setStatus('● a gravar ' + Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0') +
+          (recAudio ? ' (com som)' : ' (sem microfone)') + ' — carrega outra vez para parar');
+      }, 250);
+      if (opts.onRec) opts.onRec(true);
+    } catch (err) {
+      recorder = null;
+      setStatus('não foi possível gravar: ' + (err && err.name ? err.name : 'erro'));
+    }
+  }
+
+  function stopRec() {
+    clearInterval(recTimer);
+    if (recorder && recorder.state !== 'inactive') recorder.stop();
+    recorder = null;
+    if (opts.onRec) opts.onRec(false);
+    setStatus(statusBeforeRec || (tracking ? 'tracking — express yourself' : 'mouse mode'));
+  }
+
+  api.recording = () => !!recorder;
+  api.toggleRec = () => (recorder ? (stopRec(), Promise.resolve()) : startRec());
+
   api.recalibrate = () => {
     cal = createCalib();
     if (tracking) setStatus('calibrating — look neutral at the camera…');
   };
+
+  /* ---------- favoritos ---------- */
+  const favBtn = document.getElementById('btn-fav');
+  const favBar = document.getElementById('favs');
+
+  function renderFavs() {
+    if (favBtn) favBtn.textContent = isFav(api.id) ? '♥ favorito' : '♡ favorito';
+    if (!favBar) return;
+    const list = loadFavs();
+    favBar.innerHTML = '';
+    favBar.style.display = list.length ? '' : 'none';
+    for (const id of list) {
+      const b = document.createElement('button');
+      b.className = 'fav-chip' + (id === api.id ? ' on' : '');
+      b.textContent = '@' + id.slice(0, 6);
+      b.title = id;
+      b.addEventListener('click', () => loadCritter(id));
+      favBar.appendChild(b);
+    }
+  }
+  api.renderFavs = renderFavs;
+
+  if (favBtn) favBtn.addEventListener('click', () => { toggleFav(api.id); renderFavs(); });
+
+  const recBtn = document.getElementById('btn-rec');
+  if (recBtn) {
+    if (!recSupported()) recBtn.style.display = 'none';
+    recBtn.addEventListener('click', () => {
+      api.toggleRec();
+      recBtn.textContent = api.recording() ? '■ parar' : '● gravar';
+      recBtn.classList.toggle('rec-on', api.recording());
+    });
+  }
 
   document.getElementById('btn-random').addEventListener('click', () => loadCritter(randomId()));
   document.getElementById('btn-save').addEventListener('click', savePng);
@@ -180,6 +284,7 @@ function startRigPage(opts) {
 
   const h = window.location.hash.slice(1);
   loadCritter(/^[0-9a-z]{6,10}$/.test(h) ? h : randomId());
+  renderFavs();
   requestAnimationFrame(frame);
   startTracking();
   return api;

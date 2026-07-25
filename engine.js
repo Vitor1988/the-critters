@@ -26,7 +26,20 @@ const PALETTES = [
   { name: 'candy',  bg: '#ffe5f1', face: ['#ffc4dd', '#ffd6e8'], line: '#7a1f4d', ear: '#ff8fb8', eye: '#fff6fa', pupil: '#7a1f4d', nose: '#ff8fb8', horn: '#5ec8e5', mouth: '#d94f70', teeth: '#fff6fa' },
   { name: 'denim',  bg: '#e3ecf5', face: ['#b8cfe8', '#cbddf0'], line: '#1d3557', ear: '#5c7ea3', eye: '#f5f9fd', pupil: '#1d3557', nose: '#5c7ea3', horn: '#e9c46a', mouth: '#c1666b', teeth: '#f5f9fd' },
   { name: 'slime',  bg: '#f2ffd8', face: ['#c6ec7d', '#d9f49b'], line: '#2f4419', ear: '#7ba23f', eye: '#fafff0', pupil: '#2f4419', nose: '#7ba23f', horn: '#9b5de5', mouth: '#e07a9a', teeth: '#fafff0' },
-  { name: 'noir',  mono: true,  bg: '#131417', face: ['#23262b', '#2e3238'], line: '#e8e6df', ear: '#4a4f57', eye: '#e8e6df', pupil: '#131417', nose: '#4a4f57', horn: '#ffd23f', mouth: '#7a7e85', teeth: '#e8e6df' }
+  { name: 'noir',  mono: true,  bg: '#131417', face: ['#23262b', '#2e3238'], line: '#e8e6df', ear: '#4a4f57', eye: '#e8e6df', pupil: '#131417', nose: '#4a4f57', horn: '#ffd23f', mouth: '#7a7e85', teeth: '#e8e6df' },
+  /* --------------------------------------------------------------------------
+     A partir daqui ficam fora do W_PALETTE de propósito: nunca saem por sorteio,
+     só à mão no studio. O ID escolhe a paleta por pesos acumulados, portanto
+     mexer na tabela do sorteio mudaria a cor de todos os critters já gerados.
+     -------------------------------------------------------------------------- */
+  { name: 'dusk',   bg: '#221a35', face: ['#6b5b95', '#7d6ba8'], line: '#150f24', ear: '#c86b98', eye: '#f3eaff', pupil: '#150f24', nose: '#c86b98', horn: '#ffd23f', mouth: '#e0729a', teeth: '#f3eaff' },
+  { name: 'coral',  bg: '#fff0eb', face: ['#ff9d8a', '#ffb3a3'], line: '#5c2a28', ear: '#ff6f61', eye: '#fff7f4', pupil: '#5c2a28', nose: '#ff6f61', horn: '#3ec9b8', mouth: '#d94f45', teeth: '#fff7f4' },
+  { name: 'mint',   bg: '#e8f7f0', face: ['#a8e6c8', '#c2eeda'], line: '#1e4636', ear: '#6fc9a0', eye: '#f7fffb', pupil: '#1e4636', nose: '#6fc9a0', horn: '#ffb84d', mouth: '#4a9c78', teeth: '#f7fffb' },
+  { name: 'clay',   bg: '#f2e6dc', face: ['#c97b5a', '#d99276'], line: '#40241a', ear: '#8c4f36', eye: '#fdf4ee', pupil: '#40241a', nose: '#8c4f36', horn: '#4a7c8c', mouth: '#8c4f36', teeth: '#fdf4ee' },
+  { name: 'ice',    bg: '#eef4fa', face: ['#cfe3f5', '#e0edf9'], line: '#24435c', ear: '#8fbadb', eye: '#fbfdff', pupil: '#24435c', nose: '#8fbadb', horn: '#f2a2b8', mouth: '#6f9fc4', teeth: '#fbfdff' },
+  { name: 'neon',   bg: '#0d0d14', face: ['#1f2233', '#2a2e44'], line: '#39ffb0', ear: '#ff3f8e', eye: '#39ffb0', pupil: '#0d0d14', nose: '#ff3f8e', horn: '#ffe74c', mouth: '#ff3f8e', teeth: '#39ffb0' },
+  { name: 'butter', bg: '#fff8e1', face: ['#ffe08a', '#ffeaa8'], line: '#5c4415', ear: '#e8a33d', eye: '#fffdf5', pupil: '#5c4415', nose: '#e8a33d', horn: '#7fb069', mouth: '#d4813a', teeth: '#fffdf5' },
+  { name: 'plum',   bg: '#f6ebf5', face: ['#d9a7cd', '#e6bfdc'], line: '#4a1f42', ear: '#a35590', eye: '#fdf7fc', pupil: '#4a1f42', nose: '#a35590', horn: '#6fc9a0', mouth: '#a3557f', teeth: '#fdf7fc' }
 ];
 
 const SPECIES = [
@@ -1433,6 +1446,22 @@ function drawModel(ctx, model, sig, SENS, frozen) {
 }
 
 const SENS_DEFAULTS = { mouthGain: 1, mouthWidth: 1, openHeight: 1, puckerFx: 1, gazeGain: 1, blinkGain: 1, headGain: 1, headMove: 1, sphere: 1, lean: 1, smooth: 1, visemes: 0 };
+/* ---------- favoritos (localStorage, partilhados pelas três páginas) ---------- */
+const FAVS_KEY = 'critter-favs';
+const FAVS_MAX = 60;
+
+function loadFavs() {
+  try { const l = JSON.parse(localStorage.getItem(FAVS_KEY)); return Array.isArray(l) ? l : []; } catch (e) { return []; }
+}
+function isFav(id) { return loadFavs().indexOf(id) >= 0; }
+function toggleFav(id) {
+  const l = loadFavs();
+  const i = l.indexOf(id);
+  if (i >= 0) l.splice(i, 1); else l.unshift(id);
+  try { localStorage.setItem(FAVS_KEY, JSON.stringify(l.slice(0, FAVS_MAX))); } catch (e) {}
+  return i < 0;
+}
+
 function loadCritterCfg(id) {
   try { return JSON.parse(localStorage.getItem('critter-cfg:' + id)) || {}; } catch (e) { return {}; }
 }
