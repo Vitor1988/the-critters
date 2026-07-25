@@ -16,6 +16,7 @@ html,body{margin:0;padding:0;background:#f2f2f2;overscroll-behavior:none;overflo
 button{border:0;background:#000;color:#fff;padding:14px 18px;margin-right:8px;font-size:14px;font-family:'Source Code Pro',monospace;cursor:pointer}
 button:hover{opacity:.75}
 #cam{position:fixed;right:16px;bottom:16px;width:180px;border-radius:8px;transform:scaleX(-1);opacity:.85;z-index:1000}
+#btn-cnext{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);z-index:1003;padding:16px 34px;font-size:16px}
 @media (max-width:600px){
   .content{margin-top:12px;margin-left:12px}
   .header h1{font-size:17px}
@@ -28,6 +29,7 @@ button:hover{opacity:.75}
 </head>
 <body>
 <canvas id="render"></canvas>
+<button id="btn-cnext" style="display:none">next</button>
 <video id="cam" autoplay muted playsinline></video>
 <div class="content">
   <div class="header"><h1 id="txt-title">the critters — rigged</h1></div>
@@ -35,7 +37,6 @@ button:hover{opacity:.75}
   <div class="navigation">
     <button id="btn-random">random</button>
     <button id="btn-recal">recalibrate</button>
-    <button id="btn-cnext" style="display:none">next</button>
     <button id="btn-save">save png</button>
     <button id="btn-back">generative</button>
     <button id="btn-studio">studio</button>
@@ -179,6 +180,7 @@ function loadCritter(id) {
     openMouthShapes.push(rig);
   }
 
+  maybeStartWizard();
   titleEl.textContent = 'the critter @' + id + ' — rigged';
   const fg = luminance(pal.bg) >= 128 ? '#000' : '#fff';
   titleEl.style.color = fg; descEl.style.color = fg;
@@ -188,6 +190,7 @@ const sig = { blinkL: 1, blinkR: 1, mouth: 0, mouthW: 0, expr: 0, yaw: 0, pitch:
 let calib = null, calibFrames = 0, calibAcc = { ear: 0, mouth: 0, yaw: 0, pitch: 0, roll: 0, hx: 0, hy: 0, mouthW: 0, gx: 0, gy: 0, jawB: 0, jawMax: 0, jawMaxM: 0, stretchMax: 0, puckerMax: 0 };
 let calPhase = 0;
 let calibMeans = null;
+let wizardActive = false;
 let profile = null;
 try { profile = JSON.parse(localStorage.getItem('critter-face-profile') || 'null'); } catch (e) {}
 let tracking = false;
@@ -235,21 +238,23 @@ function processLandmarks(lm, bs) {
 
   if (!calib) {
     calibFrames++;
-    if (calPhase === 0) {
+    if (!wizardActive || calPhase === 0) {
       calibAcc.ear += (earL + earR) / 2;
       calibAcc.mouth += mouthR;
       calibAcc.yaw += yawRaw; calibAcc.pitch += pitchRaw; calibAcc.roll += rollRaw;
       calibAcc.hx += hxRaw; calibAcc.hy += hyRaw; calibAcc.mouthW += mouthW;
       calibAcc.gx += gazeX; calibAcc.gy += gazeY;
       if (bs) calibAcc.jawB += bs.jawOpen;
-    } else if (calPhase === 1) {
+    }
+    if (wizardActive && calPhase === 1) {
       calibAcc.jawMax = Math.max(calibAcc.jawMax, bs ? bs.jawOpen : 0);
       calibAcc.jawMaxM = Math.max(calibAcc.jawMaxM, mouthR);
-    } else if (calPhase === 2) {
+    } else if (wizardActive && calPhase === 2) {
       calibAcc.stretchMax = Math.max(calibAcc.stretchMax, bs ? (bs.mouthStretchLeft + bs.mouthStretchRight) / 2 : 0);
-    } else if (calPhase === 3) {
+    } else if (wizardActive && calPhase === 3) {
       calibAcc.puckerMax = Math.max(calibAcc.puckerMax, bs ? bs.mouthPucker : 0);
     }
+    if (!wizardActive && calibFrames >= 50) finalizeAutoCalib();
     return;
   }
 
@@ -334,8 +339,8 @@ async function startTracking() {
     video.srcObject = stream;
     await video.play();
     tracking = true;
-    document.getElementById('btn-cnext').style.display = '';
-    setStatus(calStepTxt());
+    setStatus('calibrating — look neutral at the camera…');
+    maybeStartWizard();
   } catch (err) {
     tracking = false;
     video.style.display = 'none';
@@ -345,8 +350,13 @@ async function startTracking() {
 
 function calStepTxt() {
   const total = profile ? 1 : 4;
-  const labels = ['relaxa a cara neutra', 'abre a boca ao MÁXIMO (aaa)', 'estica os lábios (eee)', 'faz biquinho (ooo)'];
-  return 'calibração ' + (calPhase + 1) + '/' + total + ' — ' + labels[calPhase] + ' → carrega NEXT';
+  const labels = [
+    'relaxa a cara, boca fechada, a olhar para a câmara',
+    'abre a boca o MÁXIMO que conseguires (diz AAA alto) e mantém',
+    'estica os lábios para os lados ao máximo (diz EEE) e mantém',
+    'faz biquinho com os lábios para a frente (diz OOO) e mantém'
+  ];
+  return 'passo ' + (calPhase + 1) + '/' + total + ': ' + labels[calPhase] + ' → depois carrega NEXT';
 }
 
 function advanceCalPhase() {
@@ -379,9 +389,45 @@ function advanceCalPhase() {
       try { localStorage.setItem('critter-face-profile', JSON.stringify(profile)); } catch (e) {}
     }
     document.getElementById('btn-cnext').style.display = 'none';
+    wizardActive = false;
     setStatus('tracking — express yourself');
   } else {
     setStatus(calStepTxt());
+  }
+}
+
+function finalizeAutoCalib() {
+  const n = Math.max(1, calibFrames);
+  calib = {
+    ear: calibAcc.ear / n, mouth: calibAcc.mouth / n, mouthW: calibAcc.mouthW / n,
+    yaw: calibAcc.yaw / n, pitch: calibAcc.pitch / n, roll: calibAcc.roll / n,
+    hx: calibAcc.hx / n, hy: calibAcc.hy / n,
+    gx: calibAcc.gx / n, gy: calibAcc.gy / n,
+    ranges: profile ? Object.assign({}, profile.ranges, { jawRestB: calibAcc.jawB / n }) : {
+      jaw: 0.55, jawM: calibAcc.mouth / n * 1.6, stretch: 0.6, pucker: 0.6, jawRestB: calibAcc.jawB / n
+    }
+  };
+  setStatus('tracking — express yourself');
+}
+
+function startWizard() {
+  wizardActive = true;
+  calib = null; calibFrames = 0; calPhase = 0; calibMeans = null;
+  calibAcc = { ear: 0, mouth: 0, yaw: 0, pitch: 0, roll: 0, hx: 0, hy: 0, mouthW: 0, gx: 0, gy: 0, jawB: 0, jawMax: 0, jawMaxM: 0, stretchMax: 0, puckerMax: 0 };
+  document.getElementById('btn-cnext').style.display = '';
+  setStatus(calStepTxt());
+}
+
+function maybeStartWizard() {
+  if (!model) return;
+  if (model.mouth.style === 'rig') {
+    if (!profile && tracking && !wizardActive && !calib) startWizard();
+    else if (!profile && tracking && calib) startWizard();
+  } else if (wizardActive) {
+    wizardActive = false;
+    document.getElementById('btn-cnext').style.display = 'none';
+    calib = null; calibFrames = 0; calPhase = 0;
+    setStatus('calibrating — look neutral at the camera…');
   }
 }
 
@@ -543,13 +589,13 @@ function savePng() {
 document.getElementById('btn-random').addEventListener('click', () => loadCritter(randomId()));
 document.getElementById('btn-save').addEventListener('click', savePng);
 document.getElementById('btn-recal').addEventListener('click', () => {
-  profile = null;
-  try { localStorage.removeItem('critter-face-profile'); } catch (e) {}
-  calib = null; calibFrames = 0; calPhase = 0; calibMeans = null;
-  calibAcc = { ear: 0, mouth: 0, yaw: 0, pitch: 0, roll: 0, hx: 0, hy: 0, mouthW: 0, gx: 0, gy: 0, jawB: 0, jawMax: 0, jawMaxM: 0, stretchMax: 0, puckerMax: 0 };
-  if (tracking) {
-    document.getElementById('btn-cnext').style.display = '';
-    setStatus(calStepTxt());
+  if (model && model.mouth.style === 'rig') {
+    profile = null;
+    try { localStorage.removeItem('critter-face-profile'); } catch (e) {}
+    startWizard();
+  } else {
+    calib = null; calibFrames = 0;
+    if (tracking) setStatus('calibrating — look neutral at the camera…');
   }
 });
 document.getElementById('btn-back').addEventListener('click', () => { window.location.href = 'index.html' + window.location.hash; });
