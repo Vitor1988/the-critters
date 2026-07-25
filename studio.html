@@ -198,8 +198,8 @@ function loadCritter(id) {
   titleEl.style.color = fg; descEl.style.color = fg;
 }
 
-const sig = { blinkL: 1, blinkR: 1, mouth: 0, mouthW: 0, expr: 0, yaw: 0, pitch: 0, roll: 0, gx: 0, gy: 0, hx: 0, hy: 0, joy: 0, sad: 0, surprise: 0, anger: 0, wide: 0, pucker: 0, stretch: 0, jawX: 0, funnel: 0, lipOpen: 0, lipWidth: 1, lipCorner: 0 };
-let calib = null, calibFrames = 0, calibAcc = { ear: 0, mouth: 0, yaw: 0, pitch: 0, roll: 0, hx: 0, hy: 0, mouthW: 0, gx: 0, gy: 0, corner: 0 };
+const sig = { blinkL: 1, blinkR: 1, mouth: 0, mouthW: 0, expr: 0, yaw: 0, pitch: 0, roll: 0, gx: 0, gy: 0, hx: 0, hy: 0, joy: 0, sad: 0, surprise: 0, anger: 0, wide: 0, pucker: 0, stretch: 0, jawX: 0, funnel: 0 };
+let calib = null, calibFrames = 0, calibAcc = { ear: 0, mouth: 0, yaw: 0, pitch: 0, roll: 0, hx: 0, hy: 0, mouthW: 0, gx: 0, gy: 0 };
 let tracking = false;
 const mouse = { x: 0, y: 0, down: false };
 window.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
@@ -224,7 +224,6 @@ function processLandmarks(lm, bs) {
   const faceH = dist(lm[10], lm[152]);
   const mouthR = dist(lm[13], lm[14]) / faceH;
   const mouthW = dist(lm[61], lm[291]) / faceH;
-  const cornerRaw = ((lm[61].y + lm[291].y) / 2 - lm[17].y) / faceH;
 
   const rollRaw = Math.atan2(lm[263].y - lm[33].y, lm[263].x - lm[33].x);
   const midX = (lm[234].x + lm[454].x) / 2;
@@ -251,15 +250,13 @@ function processLandmarks(lm, bs) {
     calibAcc.yaw += yawRaw; calibAcc.pitch += pitchRaw; calibAcc.roll += rollRaw;
     calibAcc.hx += hxRaw; calibAcc.hy += hyRaw; calibAcc.mouthW += mouthW;
     calibAcc.gx += gazeX; calibAcc.gy += gazeY;
-    calibAcc.corner += cornerRaw;
     if (calibFrames >= 50) {
       const n = calibFrames;
       calib = {
         ear: calibAcc.ear / n, mouth: calibAcc.mouth / n, mouthW: calibAcc.mouthW / n,
         yaw: calibAcc.yaw / n, pitch: calibAcc.pitch / n, roll: calibAcc.roll / n,
         hx: calibAcc.hx / n, hy: calibAcc.hy / n,
-        gx: calibAcc.gx / n, gy: calibAcc.gy / n,
-        corner: calibAcc.corner / n
+        gx: calibAcc.gx / n, gy: calibAcc.gy / n
       };
       setStatus('tracking — express yourself');
     }
@@ -306,10 +303,6 @@ function processLandmarks(lm, bs) {
     const exprT = clamp(-(cornerY - lm[17].y) / faceH * 9, -1, 1);
     sig.expr += (exprT - sig.expr) * 0.3;
   }
-
-  sig.lipOpen += (clamp(Math.pow(clamp((mouthR - calib.mouth * 1.1) / 0.05, 0, 1), 0.8), 0, 1) - sig.lipOpen) * 0.5;
-  sig.lipWidth += (clamp(mouthW / calib.mouthW, 0.55, 1.7) - sig.lipWidth) * 0.4;
-  sig.lipCorner += (clamp(-(cornerRaw - calib.corner) * 28, -1, 1) - sig.lipCorner) * 0.35;
 
   sig.gx += (clamp(gazeX - calib.gx, -1, 1) - sig.gx) * 0.35;
   sig.gy += (clamp(gazeY - calib.gy, -1, 1) - sig.gy) * 0.35;
@@ -427,33 +420,17 @@ function frame(now) {
     for (const sh of model.shapes) {
       if (sh.role === 'mouthRig') {
         sh.drop = 0;
-        if (model.mouth.style === 'rig') {
-          sh.sx = sig.lipWidth * (1 - sig.pucker * 0.3);
-          sh.ox = jawShift;
-          if (sh.basePts) {
-            const n = sh.half;
-            const openH = sig.lipOpen * model.dropCap * 0.95 * SENS.openHeight * (1 + sig.funnel * 0.3);
-            for (let i = 0; i < sh.pts.length; i++) {
-              const bp = sh.basePts[i < n ? i : 2 * n - 1 - i];
-              const nx = Math.max(-1, Math.min(1, (bp[0] - sh.cx) / sh.halfW));
-              const prof = Math.sqrt(Math.max(0, 1 - nx * nx));
-              sh.pts[i][0] = bp[0];
-              sh.pts[i][1] = bp[1] + openH * prof * (i < n ? -0.2 : 1) - sig.lipCorner * 8 * nx * nx;
-            }
-          }
-        } else {
-          sh.sx = mW * (1 - sig.pucker * 0.45 * SENS.puckerFx);
-          sh.ox = jawShift;
-          if (sh.basePts) {
-            const n = sh.half;
-            const openH = sig.mouth * model.dropCap * 0.9 * SENS.openHeight * (1 + sig.funnel * 0.35 + sig.pucker * 0.15);
-            for (let i = 0; i < sh.pts.length; i++) {
-              const bp = sh.basePts[i < n ? i : 2 * n - 1 - i];
-              const nx = Math.max(-1, Math.min(1, (bp[0] - sh.cx) / sh.halfW));
-              const prof = Math.sqrt(Math.max(0, 1 - nx * nx));
-              sh.pts[i][0] = bp[0];
-              sh.pts[i][1] = bp[1] + openH * prof * (i < n ? -0.25 : 1) - smileK * 7 * nx * nx;
-            }
+        sh.sx = mW * (1 - sig.pucker * 0.45 * SENS.puckerFx);
+        sh.ox = jawShift;
+        if (sh.basePts) {
+          const n = sh.half;
+          const openH = sig.mouth * model.dropCap * 0.9 * SENS.openHeight * (1 + sig.funnel * 0.35 + sig.pucker * 0.15);
+          for (let i = 0; i < sh.pts.length; i++) {
+            const bp = sh.basePts[i < n ? i : 2 * n - 1 - i];
+            const nx = Math.max(-1, Math.min(1, (bp[0] - sh.cx) / sh.halfW));
+            const prof = Math.sqrt(Math.max(0, 1 - nx * nx));
+            sh.pts[i][0] = bp[0];
+            sh.pts[i][1] = bp[1] + openH * prof * (i < n ? -0.25 : 1) - smileK * 7 * nx * nx;
           }
         }
       } else if (sh.teethRig) {
@@ -509,7 +486,7 @@ function savePng() {
 document.getElementById('btn-random').addEventListener('click', () => loadCritter(randomId()));
 document.getElementById('btn-save').addEventListener('click', savePng);
 document.getElementById('btn-recal').addEventListener('click', () => {
-  calib = null; calibFrames = 0; calibAcc = { ear: 0, mouth: 0, yaw: 0, pitch: 0, roll: 0, hx: 0, hy: 0, mouthW: 0, gx: 0, gy: 0, corner: 0 };
+  calib = null; calibFrames = 0; calibAcc = { ear: 0, mouth: 0, yaw: 0, pitch: 0, roll: 0, hx: 0, hy: 0, mouthW: 0, gx: 0, gy: 0 };
   if (tracking) setStatus('calibrating — look neutral at the camera…');
 });
 document.getElementById('btn-back').addEventListener('click', () => { window.location.href = 'index.html' + window.location.hash; });
@@ -539,7 +516,6 @@ function initPanel() {
     PALETTES.forEach((p, i) => palSel.add(new Option(p.name, i)));
     const mSel = document.getElementById('cfg-mouth');
     MOUTH_STYLES.forEach((m, i) => mSel.add(new Option(m, i)));
-    mSel.add(new Option('rig (otimizada)', 'rig'));
     const sl = document.getElementById('sliders');
     for (const [key, label, mn, mx] of SLIDERS) {
       const row = document.createElement('div');
@@ -562,9 +538,8 @@ function initPanel() {
       loadCritter(currentId);
     });
     document.getElementById('cfg-mouth').addEventListener('change', e => {
-      const v = e.target.value;
       const c = loadCritterCfg(currentId);
-      c.traits = Object.assign({}, c.traits, { mouth: v === 'rig' ? 'rig' : +v });
+      c.traits = Object.assign({}, c.traits, { mouth: +e.target.value });
       saveCritterCfg(currentId, c);
       loadCritter(currentId);
     });
