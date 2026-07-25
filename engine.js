@@ -475,7 +475,7 @@ function buildModel(id, opts) {
   }
 
   const mouthStart = shapes.length;
-  const mouthStyle = MOUTH_STYLES[t.mouth];
+  const mouthStyle = t.mouth === 'rig' ? 'rig' : MOUTH_STYLES[t.mouth];
   const my = myBase, mw = Math.min(34, mouthRx * 0.55), mh = 24;
   const smileArcY = (tx) => my - 12 + mh * Math.sin(Math.PI * Math.max(0, Math.min(1, (tx + mw) / (2 * mw))));
   let teethCurve = null, teethH = 0;
@@ -529,6 +529,14 @@ function buildModel(id, opts) {
       addShape(shapes, wobblyPoly([[tx - 6, my - 4 - mh * 0.4], [tx + 6, my - 4 - mh * 0.4], [tx, my - 4 + mh * 0.12]], 2, 1.8, rng),
         { fill: pal.teeth, stroke: null }, rng, 8);
     }
+  } else if (mouthStyle === 'rig') {
+    addShape(shapes, wobblyArc(0, my - 10, mw, mh * 0.7, 0.08, Math.PI - 0.08, 18, 1.5, rng), { fill: null, stroke: pal.line, closed: false, lw: 3.5 }, rng, 8);
+    const rtw = mw * 0.85, rty = my - 12;
+    const tsh = addShape(shapes, wobblyPoly([[-rtw / 2, rty], [rtw / 2, rty], [rtw / 2 - 3, rty + 9], [-rtw / 2 + 3, rty + 9]], 1.5, 2, rng),
+      { fill: pal.teeth, stroke: pal.line, lw: 2 }, rng, 8);
+    tsh.rigTeeth = true;
+    const gsh = addShape(shapes, wobblyCircle(0, my + 6, mw * 0.4, mh * 0.32, 10, 2, rng), { fill: pal.mouth, stroke: null }, rng, 9);
+    gsh.tongue = true;
   } else if (mouthStyle === 'smirk') {
     addShape(shapes, wobblyArc(mw * 0.3, my - 10, mw * 0.7, mh * 0.75, 0.15, Math.PI * 0.85, 10, 3.5, rng, -0.12),
       { fill: null, stroke: pal.line, closed: false, lw: 3.5 }, rng, 8);

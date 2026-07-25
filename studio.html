@@ -147,6 +147,10 @@ function loadCritter(id) {
       let wMin = Infinity, wMax = -Infinity;
       for (const p of sh.pts) { if (p[0] < wMin) wMin = p[0]; if (p[0] > wMax) wMax = p[0]; }
       if (wMax - wMin >= 6) nonClosed.push({ sh, c }); else sh.alphaMul = 0;
+    } else if (sh.tongue) {
+      sh.tongueRig = true;
+      sh.alphaMul = 0;
+      sh.cx = 0;
     } else if (sh.fill === pal.mouth) {
       sh.alphaMul = 0;
     } else if (sh.fill === pal.line || m.style === 'open' || m.style === 'grin' || m.style === 'o') {
@@ -434,9 +438,21 @@ function frame(now) {
           }
         }
       } else if (sh.teethRig) {
-        sh.sx = mW * (1 - sig.pucker * 0.3);
+        if (sh.rigTeeth) {
+          sh.alphaMul = clamp(sig.mouth * 3, 0, 1);
+          sh.sx = mW;
+          sh.ox = jawShift;
+          sh.oy = jawDropT * 0.12;
+        } else {
+          sh.sx = mW * (1 - sig.pucker * 0.3);
+          sh.ox = jawShift;
+          sh.oy = sh.upperTeeth ? jawDropT * 0.1 : jawDropT;
+        }
+      } else if (sh.tongueRig) {
+        sh.alphaMul = clamp((sig.mouth - 0.4) * 2.2, 0, 1);
+        sh.sx = mW * (1 - sig.pucker * 0.4);
         sh.ox = jawShift;
-        sh.oy = sh.upperTeeth ? jawDropT * 0.1 : jawDropT;
+        sh.oy = jawDropT * 0.75;
       } else if (sh.holeRig) {
         const RX = sh.baseRx * mW * (1 - sig.pucker * 0.5 * SENS.puckerFx);
         const RY = Math.max(1.5, sh.baseRy * (0.12 + 1.5 * sig.mouth) * (1 + sig.funnel * 0.35));
@@ -516,6 +532,7 @@ function initPanel() {
     PALETTES.forEach((p, i) => palSel.add(new Option(p.name, i)));
     const mSel = document.getElementById('cfg-mouth');
     MOUTH_STYLES.forEach((m, i) => mSel.add(new Option(m, i)));
+    mSel.add(new Option('rig (otimizada)', 'rig'));
     const sl = document.getElementById('sliders');
     for (const [key, label, mn, mx] of SLIDERS) {
       const row = document.createElement('div');
@@ -538,8 +555,9 @@ function initPanel() {
       loadCritter(currentId);
     });
     document.getElementById('cfg-mouth').addEventListener('change', e => {
+      const v = e.target.value;
       const c = loadCritterCfg(currentId);
-      c.traits = Object.assign({}, c.traits, { mouth: +e.target.value });
+      c.traits = Object.assign({}, c.traits, { mouth: v === 'rig' ? 'rig' : +v });
       saveCritterCfg(currentId, c);
       loadCritter(currentId);
     });
