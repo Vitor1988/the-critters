@@ -77,6 +77,11 @@ window.addEventListener('resize', resize);
 resize();
 
 let model = null, pal = null, currentId = '';
+let lipRig = null;
+let lastLm = null;
+
+const LIP_OUTER = [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 409, 270, 269, 267, 0, 37, 39, 40, 185];
+const LIP_INNER = [78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308, 324, 318, 402, 317, 14, 87, 178, 88, 95];
 let SENS = Object.assign({}, SENS_DEFAULTS);
 let eyeBinds = [];
 let openMouthShapes = [];
@@ -140,6 +145,7 @@ function loadCritter(id) {
     holeCy = centroid(sh.pts)[1];
     break;
   }
+  lipRig = null;
   const nonClosed = [];
   for (const sh of model.shapes.filter(s => s.role === 'mouth')) {
     const c = centroid(sh.pts);
@@ -191,6 +197,22 @@ function loadCritter(id) {
     model.shapes.splice(model.shapes.indexOf(nonClosed[0].sh), 0, rig);
     for (const { sh } of nonClosed) sh.alphaMul = 0;
     openMouthShapes.push(rig);
+  }
+
+  if (m.style === 'rig') {
+    const fb = model.shapes.filter(s => s.role === 'mouthRig');
+    const mkLip = (n, fill, stroke, lw) => {
+      const pts = [];
+      for (let i = 0; i < n; i++) pts.push([0, m.y - 6]);
+      const sh = { pts, offs: pts.map(() => [0, 0]), closed: true, lw, alpha: 1, intensity: 5, fill, stroke, role: 'lip', alphaMul: 0 };
+      model.shapes.push(sh);
+      return sh;
+    };
+    lipRig = {
+      inner: mkLip(LIP_INNER.length, pal.line, null, 2),
+      outer: mkLip(LIP_OUTER.length, null, pal.line, 5),
+      smooth: null, fallback: fb
+    };
   }
 
   titleEl.textContent = 'the critter @' + id + ' — studio';
@@ -359,6 +381,7 @@ function frame(now) {
   if (tracking && landmarker && video.readyState >= 2 && (!IS_MOBILE || detTick % 2 === 0)) {
     const res = landmarker.detectForVideo(video, now);
     if (res.faceLandmarks && res.faceLandmarks[0]) {
+      lastLm = res.faceLandmarks[0];
       let bs = null;
       if (res.faceBlendshapes && res.faceBlendshapes[0]) {
         bs = {};
@@ -398,6 +421,13 @@ function frame(now) {
   ctx.translate(W / 2 + sig.hx * 16 * S, H / 2 + (12 + sig.hy * 22 - sig.pitch * 12) * S);
   ctx.rotate(sig.roll * 0.5);
   ctx.scale(S, S);
+
+  if (lipRig) {
+    const vis = lastLm ? 1 : 0;
+    lipRig.outer.alphaMul = vis; lipRig.inner.alphaMul = vis;
+    for (const sh of lipRig.fallback) sh.alphaMul = 1 - vis;
+    if (lastLm) updateLipRig(lastLm);
+  }
 
   if (model) {
     for (const b of eyeBinds) {
@@ -473,6 +503,35 @@ function frame(now) {
   ctx.restore();
 }
 
+function updateLipRig(lm) {
+  const m = model.mouth;
+  let cx = 0, cy = 0, wMin = Infinity, wMax = -Infinity;
+  for (const i of LIP_OUTER) {
+    const p = lm[i];
+    cx += p.x; cy += p.y;
+    if (p.x < wMin) wMin = p.x;
+    if (p.x > wMax) wMax = p.x;
+  }
+  cx /= LIP_OUTER.length; cy /= LIP_OUTER.length;
+  const bboxW = Math.max(1e-6, wMax - wMin);
+  const k = (m.mw * 2 * 1.05) / bboxW;
+  const ay = m.y - 6;
+  const map = p => [(cx - p.x) * k * SENS.mouthWidth, ay + (p.y - cy) * k * SENS.mouthGain];
+  if (!lipRig.smooth) lipRig.smooth = LIP_OUTER.concat(LIP_INNER).map(i => map(lm[i]));
+  const setPts = (sh, idxs, off) => {
+    for (let j = 0; j < idxs.length; j++) {
+      const t = map(lm[idxs[j]]);
+      const s = lipRig.smooth[off + j];
+      s[0] += (t[0] - s[0]) * 0.45;
+      s[1] += (t[1] - s[1]) * 0.45;
+      sh.pts[j][0] = s[0];
+      sh.pts[j][1] = s[1];
+    }
+  };
+  setPts(lipRig.outer, LIP_OUTER, 0);
+  setPts(lipRig.inner, LIP_INNER, LIP_OUTER.length);
+}
+
 function savePng() {
   canvas.toBlob(blob => {
     const a = document.createElement('a');
@@ -516,6 +575,7 @@ function initPanel() {
     PALETTES.forEach((p, i) => palSel.add(new Option(p.name, i)));
     const mSel = document.getElementById('cfg-mouth');
     MOUTH_STYLES.forEach((m, i) => mSel.add(new Option(m, i)));
+    mSel.add(new Option('rig 1:1 (a tua boca)', 'rig'));
     const sl = document.getElementById('sliders');
     for (const [key, label, mn, mx] of SLIDERS) {
       const row = document.createElement('div');
@@ -538,8 +598,9 @@ function initPanel() {
       loadCritter(currentId);
     });
     document.getElementById('cfg-mouth').addEventListener('change', e => {
+      const v = e.target.value;
       const c = loadCritterCfg(currentId);
-      c.traits = Object.assign({}, c.traits, { mouth: +e.target.value });
+      c.traits = Object.assign({}, c.traits, { mouth: v === 'rig' ? 'rig' : +v });
       saveCritterCfg(currentId, c);
       loadCritter(currentId);
     });
