@@ -1,0 +1,90 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>rig test</title>
+<style>body{margin:0;background:#fff;font:11px monospace}</style></head>
+<body>
+<canvas id="c"></canvas>
+<script src="engine.js"></script>
+<script>
+'use strict';
+const SETS = {
+  mouth: [
+    ['rest',       {}],
+    ['open .5',    { mouth: 0.5 }],
+    ['open 1',     { mouth: 1 }],
+    ['smile',      { expr: 1 }],
+    ['smile+open', { mouth: 0.8, expr: 1 }],
+    ['sad',        { expr: -1 }],
+    ['pucker',     { mouth: 0.3, pucker: 1, funnel: 0.7 }],
+    ['jawX',       { mouth: 0.7, jawX: 1 }]
+  ],
+  visemes: [
+    ['rest',    {}],
+    ['A  aah',  { mouth: 1 }],
+    ['E  eee',  { mouth: 0.3, mouthW: 0.5 }],
+    ['I  ih',   { mouth: 0.55, mouthW: 0.4 }],
+    ['O  oh',   { mouth: 0.7, funnel: 0.9 }],
+    ['U  ooo',  { mouth: 0.15, pucker: 1 }],
+    ['smile',   { mouth: 0.35, expr: 1, mouthW: 0.3 }],
+    ['down',    { pitch: -1.2, hy: 0.9, mouth: 0.7 }]
+  ],
+  head: [
+    ['rest',       {}],
+    ['down .5',    { pitch: -0.6, hy: 0.45, gy: 0.5 }],
+    ['down',       { pitch: -1.2, hy: 0.9, gy: 1 }],
+    ['down+open',  { pitch: -1.2, hy: 0.9, gy: 1, mouth: 0.8 }],
+    ['up',         { pitch: 1.2, hy: -0.9, gy: -1 }],
+    ['left',       { yaw: -1.2, hx: -0.8, gx: -1 }],
+    ['right+tilt', { yaw: 1.2, hx: 0.8, roll: 0.5, gx: 1 }],
+    ['tilt',       { roll: -0.8 }]
+  ]
+};
+const q = new URLSearchParams(location.search);
+const POSES = SETS[q.get('set') || 'mouth'];
+const ids = q.get('ids').split(',');
+const CW = +(q.get('cw') || 210), CH = CW * 1.12;
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const scratchCv = document.createElement('canvas');
+scratchCv.width = scratchCv.height = 8;
+const scratch = scratchCv.getContext('2d');
+cv.width = CW * POSES.length; cv.height = CH * ids.length;
+ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
+
+const SENS = Object.assign({}, SENS_DEFAULTS);
+for (const k of ['lean', 'headMove', 'sphere', 'visemes']) if (q.get(k) !== null) SENS[k] = +q.get(k);
+
+const traits = q.get('mouth') === null ? undefined : { mouth: +q.get('mouth') };
+
+ids.forEach((id, row) => {
+  const model = buildModel(id, { rig: true, traits });
+  for (const sh of model.shapes) sh.intensity = Math.max(5, sh.intensity);
+  const rig = buildRig(model);
+  POSES.forEach(([name, pose], col) => {
+    const sig = createSig();
+    Object.assign(sig, pose);
+    applyRig(model, rig, sig, SENS);
+    ctx.save();
+    ctx.translate(col * CW, row * CH);
+    ctx.beginPath(); ctx.rect(0, 0, CW, CH); ctx.clip();
+    ctx.fillStyle = model.palette.bg;
+    ctx.fillRect(0, 0, CW, CH);
+    ctx.fillStyle = '#000';
+    ctx.fillText(model.mouth.style + ' · ' + name + (SENS.visemes >= 0.5 ? ' · visemes' : ''), 6, 12);
+    /* mesma câmara que o rig-page, à escala da célula */
+    const S = CW / 340;
+    const shift = rigHeadShift(sig, SENS);
+    ctx.translate(CW / 2 + shift.x * S, CH / 2 + shift.y * S);
+    ctx.rotate(sig.roll * 0.5);
+    ctx.scale(S, S);
+    ctx.strokeStyle = 'rgba(255,0,0,.35)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(-CW, model.botY); ctx.lineTo(CW, model.botY); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-CW, model.noseBotY); ctx.lineTo(CW, model.noseBotY); ctx.stroke();
+    /* o gaze é um EMA: deixa-o assentar fora do ecrã (desenhar por cima acumularia os
+       alfas translúcidos), e só depois desenha uma vez pelo caminho da página real */
+    for (let i = 0; i < 40; i++) drawModel(scratch, model, sig, SENS, true);
+    drawModel(ctx, model, sig, SENS, true);
+    ctx.restore();
+  });
+});
+document.title = 'ready';
+</script>
+</body></html>
