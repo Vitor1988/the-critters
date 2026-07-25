@@ -179,7 +179,7 @@ function loadCritter(id) {
 }
 
 const sig = { blinkL: 1, blinkR: 1, mouth: 0, mouthW: 0, expr: 0, yaw: 0, pitch: 0, roll: 0, gx: 0, gy: 0, hx: 0, hy: 0, joy: 0, sad: 0, surprise: 0, anger: 0, wide: 0, pucker: 0, stretch: 0, jawX: 0, funnel: 0 };
-let calib = null, calibFrames = 0, calibAcc = { ear: 0, mouth: 0, yaw: 0, pitch: 0, roll: 0, hx: 0, hy: 0, mouthW: 0 };
+let calib = null, calibFrames = 0, calibAcc = { ear: 0, mouth: 0, yaw: 0, pitch: 0, roll: 0, hx: 0, hy: 0, mouthW: 0, gx: 0, gy: 0 };
 let tracking = false;
 const mouse = { x: 0, y: 0, down: false };
 window.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
@@ -213,18 +213,30 @@ function processLandmarks(lm, bs) {
   const hxRaw = (0.5 - lm[1].x) * 2;
   const hyRaw = (lm[1].y - 0.5) * 2;
 
+  let gazeX = 0, gazeY = 0;
+  if (bs) {
+    gazeX = clamp(-(bs.eyeLookOutLeft + bs.eyeLookInRight - bs.eyeLookInLeft - bs.eyeLookOutRight) * 1.3, -1, 1);
+    gazeY = clamp((bs.eyeLookDownLeft + bs.eyeLookDownRight - bs.eyeLookUpLeft - bs.eyeLookUpRight) * 1.1, -1, 1);
+  } else {
+    const eyeW = dist(lm[33], lm[133]);
+    gazeX = clamp(-((lm[468].x - (lm[33].x + lm[133].x) / 2) / eyeW) * 2.4, -1, 1);
+    gazeY = clamp(((lm[468].y - (lm[159].y + lm[145].y) / 2) / (dist(lm[159], lm[145]) + 0.001)) * 0.8, -1, 1);
+  }
+
   if (!calib) {
     calibFrames++;
     calibAcc.ear += (earL + earR) / 2;
     calibAcc.mouth += mouthR;
     calibAcc.yaw += yawRaw; calibAcc.pitch += pitchRaw; calibAcc.roll += rollRaw;
     calibAcc.hx += hxRaw; calibAcc.hy += hyRaw; calibAcc.mouthW += mouthW;
+    calibAcc.gx += gazeX; calibAcc.gy += gazeY;
     if (calibFrames >= 50) {
       const n = calibFrames;
       calib = {
         ear: calibAcc.ear / n, mouth: calibAcc.mouth / n, mouthW: calibAcc.mouthW / n,
         yaw: calibAcc.yaw / n, pitch: calibAcc.pitch / n, roll: calibAcc.roll / n,
-        hx: calibAcc.hx / n, hy: calibAcc.hy / n
+        hx: calibAcc.hx / n, hy: calibAcc.hy / n,
+        gx: calibAcc.gx / n, gy: calibAcc.gy / n
       };
       setStatus('tracking — express yourself');
     }
@@ -258,10 +270,6 @@ function processLandmarks(lm, bs) {
     sig.jawX += (clamp((bs.mouthRight - bs.mouthLeft) + (bs.jawRight - bs.jawLeft) * 0.6, -1, 1) - sig.jawX) * 0.35;
     sig.blinkL += (clamp(1 - bs.eyeBlinkRight * 1.6, 0.02, 1) - sig.blinkL) * 0.5;
     sig.blinkR += (clamp(1 - bs.eyeBlinkLeft * 1.6, 0.02, 1) - sig.blinkR) * 0.5;
-    const bgx = clamp(-(bs.eyeLookOutLeft + bs.eyeLookInRight - bs.eyeLookInLeft - bs.eyeLookOutRight) * 1.3, -1, 1);
-    const bgy = clamp((bs.eyeLookDownLeft + bs.eyeLookDownRight - bs.eyeLookUpLeft - bs.eyeLookUpRight) * 1.1, -1, 1);
-    sig.gx += (bgx - sig.gx) * 0.35;
-    sig.gy += (bgy - sig.gy) * 0.35;
   } else {
     const tBlinkL = clamp((earL - calib.ear * 0.45) / (calib.ear * 0.45), 0.05, 1);
     const tBlinkR = clamp((earR - calib.ear * 0.45) / (calib.ear * 0.45), 0.05, 1);
@@ -274,12 +282,10 @@ function processLandmarks(lm, bs) {
     const cornerY = (lm[61].y + lm[291].y) / 2;
     const exprT = clamp(-(cornerY - lm[17].y) / faceH * 9, -1, 1);
     sig.expr += (exprT - sig.expr) * 0.3;
-    const eyeW = dist(lm[33], lm[133]);
-    const gx = -((lm[468].x - (lm[33].x + lm[133].x) / 2) / eyeW) * 2.4;
-    const gy = ((lm[468].y - (lm[159].y + lm[145].y) / 2) / (dist(lm[159], lm[145]) + 0.001)) * 0.8;
-    sig.gx += (clamp(gx, -1, 1) - sig.gx) * 0.3;
-    sig.gy += (clamp(gy, -1, 1) - sig.gy) * 0.3;
   }
+
+  sig.gx += (clamp(gazeX - calib.gx, -1, 1) - sig.gx) * 0.35;
+  sig.gy += (clamp(gazeY - calib.gy, -1, 1) - sig.gy) * 0.35;
 
   sig.roll += (-(rollRaw - calib.roll) * 2 - sig.roll) * 0.2;
   sig.yaw += (clamp((yawRaw - calib.yaw) * 2.2, -1.2, 1.2) - sig.yaw) * 0.2;
@@ -460,7 +466,7 @@ function savePng() {
 document.getElementById('btn-random').addEventListener('click', () => loadCritter(randomId()));
 document.getElementById('btn-save').addEventListener('click', savePng);
 document.getElementById('btn-recal').addEventListener('click', () => {
-  calib = null; calibFrames = 0; calibAcc = { ear: 0, mouth: 0, yaw: 0, pitch: 0, roll: 0, hx: 0, hy: 0 };
+  calib = null; calibFrames = 0; calibAcc = { ear: 0, mouth: 0, yaw: 0, pitch: 0, roll: 0, hx: 0, hy: 0, mouthW: 0, gx: 0, gy: 0 };
   if (tracking) setStatus('calibrating — look neutral at the camera…');
 });
 document.getElementById('btn-back').addEventListener('click', () => { window.location.href = 'index.html' + window.location.hash; });
