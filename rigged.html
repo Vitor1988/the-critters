@@ -11,11 +11,19 @@ html,body{margin:0;padding:0;background:#f2f2f2;overscroll-behavior:none;overflo
 .content{position:relative;margin-top:20px;margin-left:20px;text-align:left;color:#000;z-index:999;pointer-events:none}
 .header{letter-spacing:0;font-size:24px;font-family:'Source Code Pro',monospace;font-weight:600}
 .header h1{margin:0;font-size:24px}
-.description{font-size:14px;font-family:'Source Code Pro',monospace;margin-top:12px;width:520px;line-height:1.5}
+.description{font-size:14px;font-family:'Source Code Pro',monospace;margin-top:12px;width:520px;max-width:calc(100vw - 40px);line-height:1.5}
 .navigation{margin-top:16px;pointer-events:auto}
 button{border:0;background:#000;color:#fff;padding:14px 18px;margin-right:8px;font-size:14px;font-family:'Source Code Pro',monospace;cursor:pointer}
 button:hover{opacity:.75}
 #cam{position:fixed;right:16px;bottom:16px;width:180px;border-radius:8px;transform:scaleX(-1);opacity:.85;z-index:1000}
+@media (max-width:600px){
+  .content{margin-top:12px;margin-left:12px}
+  .header h1{font-size:17px}
+  .description{font-size:12px;margin-top:8px;line-height:1.4}
+  .navigation{margin-top:10px}
+  button{padding:10px 12px;font-size:12px;margin-right:6px;margin-bottom:6px}
+  #cam{width:104px;right:10px;bottom:10px}
+}
 </style>
 </head>
 <body>
@@ -40,7 +48,8 @@ const ctx = canvas.getContext('2d');
 const video = document.getElementById('cam');
 const titleEl = document.getElementById('txt-title');
 const descEl = document.getElementById('txt-description');
-const DPR = Math.min(window.devicePixelRatio || 1, 2);
+const IS_MOBILE = (window.matchMedia && matchMedia('(pointer: coarse)').matches) || /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+const DPR = Math.min(window.devicePixelRatio || 1, IS_MOBILE ? 1.5 : 2);
 let W = 0, H = 0;
 
 function resize() {
@@ -176,6 +185,9 @@ const mouse = { x: 0, y: 0, down: false };
 window.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
 window.addEventListener('mousedown', () => mouse.down = true);
 window.addEventListener('mouseup', () => mouse.down = false);
+window.addEventListener('touchstart', e => { const t = e.touches[0]; if (t) { mouse.x = t.clientX; mouse.y = t.clientY; } mouse.down = true; }, { passive: true });
+window.addEventListener('touchmove', e => { const t = e.touches[0]; if (t) { mouse.x = t.clientX; mouse.y = t.clientY; } }, { passive: true });
+window.addEventListener('touchend', () => mouse.down = false);
 let debugMode = false;
 window.addEventListener('keydown', e => {
   if (e.keyCode === 76) loadCritter(randomId());
@@ -281,16 +293,22 @@ let landmarker = null;
 async function startTracking() {
   try {
     const fileset = await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm');
-    landmarker = await FaceLandmarker.createFromOptions(fileset, {
+    const opts = del => ({
       baseOptions: {
         modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
-        delegate: 'GPU'
+        delegate: del
       },
       runningMode: 'VIDEO',
       numFaces: 1,
       outputFaceBlendshapes: true
     });
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+    try {
+      landmarker = await FaceLandmarker.createFromOptions(fileset, opts('GPU'));
+    } catch (e) {
+      landmarker = await FaceLandmarker.createFromOptions(fileset, opts('CPU'));
+    }
+    const camW = IS_MOBILE ? 480 : 640, camH = IS_MOBILE ? 360 : 480;
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { width: camW, height: camH, facingMode: 'user' } });
     video.srcObject = stream;
     await video.play();
     tracking = true;
@@ -307,10 +325,12 @@ function setStatus(t) {
 }
 
 let blinkTimer = 0;
+let detTick = 0;
 function frame(now) {
   requestAnimationFrame(frame);
 
-  if (tracking && landmarker && video.readyState >= 2) {
+  detTick++;
+  if (tracking && landmarker && video.readyState >= 2 && (!IS_MOBILE || detTick % 2 === 0)) {
     const res = landmarker.detectForVideo(video, now);
     if (res.faceLandmarks && res.faceLandmarks[0]) {
       let bs = null;
