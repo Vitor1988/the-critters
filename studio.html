@@ -604,14 +604,9 @@ function savePng() {
 document.getElementById('btn-random').addEventListener('click', () => loadCritter(randomId()));
 document.getElementById('btn-save').addEventListener('click', savePng);
 document.getElementById('btn-recal').addEventListener('click', () => {
-  if (model && model.mouth.style === 'rig') {
-    profile = null;
-    try { localStorage.removeItem('critter-face-profile'); } catch (e) {}
-    startWizard();
-  } else {
-    calib = null; calibFrames = 0;
-    if (tracking) setStatus('calibrating — look neutral at the camera…');
-  }
+  calib = null; calibFrames = 0;
+  calibAcc = { ear: 0, mouth: 0, yaw: 0, pitch: 0, roll: 0, hx: 0, hy: 0, mouthW: 0, gx: 0, gy: 0, jawB: 0, jawMax: 0, jawMaxM: 0, stretchMax: 0, puckerMax: 0 };
+  if (tracking) setStatus('calibrating — look neutral at the camera…');
 });
 document.getElementById('btn-back').addEventListener('click', () => { window.location.href = 'index.html' + window.location.hash; });
 document.getElementById('btn-rigged').addEventListener('click', () => { window.location.href = 'rigged.html' + window.location.hash; });
