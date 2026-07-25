@@ -206,6 +206,7 @@ const RIG_EYE_STYLES = ['dot', 'ball', 'chameleon', 'lazy', 'star', 'googly', 'r
 
 function buildModel(id, opts) {
   const t = parseId(id);
+  if (opts && opts.traits) Object.assign(t, opts.traits);
   const rng = mulberry32(hashStr(id));
   const sp = SPECIES[t.species];
   const pal = PALETTES[t.palette];
@@ -718,4 +719,12 @@ function drawPath(ctx, sh, env) {
   if (sh.fill) { ctx.fillStyle = sh.fill; ctx.fill(); }
   if (sh.stroke) { ctx.strokeStyle = sh.stroke; ctx.lineWidth = sh.lw; ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.stroke(); }
   if (alpha !== 1) ctx.globalAlpha = 1;
+}
+
+const SENS_DEFAULTS = { mouthGain: 1, mouthWidth: 1, openHeight: 1, puckerFx: 1, gazeGain: 1, blinkGain: 1, headGain: 1, smooth: 1 };
+function loadCritterCfg(id) {
+  try { return JSON.parse(localStorage.getItem('critter-cfg:' + id)) || {}; } catch (e) { return {}; }
+}
+function saveCritterCfg(id, cfg) {
+  try { localStorage.setItem('critter-cfg:' + id, JSON.stringify(cfg)); } catch (e) {}
 }

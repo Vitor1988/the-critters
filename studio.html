@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>the critters — rigged</title>
+<title>the critters — studio</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Source+Code+Pro:wght@500;900&display=swap');
@@ -24,21 +24,36 @@ button:hover{opacity:.75}
   button{padding:10px 12px;font-size:12px;margin-right:6px;margin-bottom:6px}
   #cam{width:104px;right:10px;bottom:10px}
 }
+.panel{position:fixed;right:12px;top:12px;width:230px;max-height:calc(100vh - 24px);overflow-y:auto;background:rgba(255,255,255,.92);border:2px solid #000;padding:10px 12px;font-family:'Source Code Pro',monospace;font-size:12px;z-index:1002;color:#000}
+.panel summary{cursor:pointer;font-weight:900;margin-bottom:6px}
+.p-row{margin:8px 0}
+.p-row span{display:block;margin-bottom:3px}
+.p-row select,.p-row input[type=range]{width:100%}
+.p-row input[type=color]{width:100%;height:26px;border:1px solid #000;background:none;padding:0}
+@media (max-width:600px){.panel{width:180px;font-size:11px}}
 </style>
 </head>
 <body>
 <canvas id="render"></canvas>
 <video id="cam" autoplay muted playsinline></video>
 <div class="content">
-  <div class="header"><h1 id="txt-title">the critters — rigged</h1></div>
+  <div class="header"><h1 id="txt-title">the critters — studio</h1></div>
   <div class="description" id="txt-description">loading face tracker…</div>
   <div class="navigation">
     <button id="btn-random">random</button>
     <button id="btn-recal">recalibrate</button>
     <button id="btn-save">save png</button>
     <button id="btn-back">generative</button>
-    <button id="btn-studio">studio</button>
+    <button id="btn-rigged">rigged</button>
+    <button id="btn-reset">reset cfg</button>
   </div>
+  <details class="panel" open>
+    <summary>studio config</summary>
+    <div class="p-row"><span>palette</span><select id="cfg-palette"></select></div>
+    <div class="p-row"><span>mouth</span><select id="cfg-mouth"></select></div>
+    <div class="p-row"><span>background</span><input type="color" id="cfg-bg"></div>
+    <div id="sliders"></div>
+  </details>
 </div>
 <script src="engine.js"></script>
 <script type="module">
@@ -178,7 +193,7 @@ function loadCritter(id) {
     openMouthShapes.push(rig);
   }
 
-  titleEl.textContent = 'the critter @' + id + ' — rigged';
+  titleEl.textContent = 'the critter @' + id + ' — studio';
   const fg = luminance(pal.bg) >= 128 ? '#000' : '#fff';
   titleEl.style.color = fg; descEl.style.color = fg;
 }
@@ -475,10 +490,81 @@ document.getElementById('btn-recal').addEventListener('click', () => {
   if (tracking) setStatus('calibrating — look neutral at the camera…');
 });
 document.getElementById('btn-back').addEventListener('click', () => { window.location.href = 'index.html' + window.location.hash; });
-document.getElementById('btn-studio').addEventListener('click', () => { window.location.href = 'studio.html' + window.location.hash; });
+document.getElementById('btn-rigged').addEventListener('click', () => { window.location.href = 'rigged.html' + window.location.hash; });
+document.getElementById('btn-reset').addEventListener('click', () => {
+  try { localStorage.removeItem('critter-cfg:' + currentId); } catch (e) {}
+  loadCritter(currentId);
+  initPanel();
+});
+
+const SLIDERS = [
+  ['mouthGain', 'mouth gain', 0.4, 2],
+  ['mouthWidth', 'mouth width', 0, 2],
+  ['openHeight', 'open height', 0.4, 1.6],
+  ['puckerFx', 'pucker fx', 0, 1.5],
+  ['gazeGain', 'gaze gain', 0.3, 2],
+  ['blinkGain', 'blink gain', 0.5, 2.5],
+  ['headGain', 'head gain', 0, 2],
+  ['smooth', 'reactivity', 0.3, 2]
+];
+
+function initPanel() {
+  const cfg = loadCritterCfg(currentId);
+  const t = parseId(currentId);
+  const palSel = document.getElementById('cfg-palette');
+  if (!palSel.options.length) {
+    PALETTES.forEach((p, i) => palSel.add(new Option(p.name, i)));
+    const mSel = document.getElementById('cfg-mouth');
+    MOUTH_STYLES.forEach((m, i) => mSel.add(new Option(m, i)));
+    const sl = document.getElementById('sliders');
+    for (const [key, label, mn, mx] of SLIDERS) {
+      const row = document.createElement('div');
+      row.className = 'p-row';
+      row.innerHTML = '<span>' + label + ' <b id="v-' + key + '"></b></span><input type="range" id="s-' + key + '" min="' + mn + '" max="' + mx + '" step="0.05">';
+      sl.appendChild(row);
+      row.querySelector('input').addEventListener('input', e => {
+        const v = +e.target.value;
+        document.getElementById('v-' + key).textContent = v.toFixed(2);
+        SENS[key] = v;
+        const c = loadCritterCfg(currentId);
+        c.sens = Object.assign({}, c.sens, { [key]: v });
+        saveCritterCfg(currentId, c);
+      });
+    }
+    palSel.addEventListener('change', () => {
+      const c = loadCritterCfg(currentId);
+      c.traits = Object.assign({}, c.traits, { palette: +palSel.value });
+      saveCritterCfg(currentId, c);
+      loadCritter(currentId);
+    });
+    document.getElementById('cfg-mouth').addEventListener('change', e => {
+      const c = loadCritterCfg(currentId);
+      c.traits = Object.assign({}, c.traits, { mouth: +e.target.value });
+      saveCritterCfg(currentId, c);
+      loadCritter(currentId);
+    });
+    document.getElementById('cfg-bg').addEventListener('input', e => {
+      const c = loadCritterCfg(currentId);
+      c.bg = e.target.value;
+      saveCritterCfg(currentId, c);
+      pal.bg = c.bg;
+      document.body.style.background = c.bg;
+    });
+  }
+  palSel.value = cfg.traits && cfg.traits.palette !== undefined ? cfg.traits.palette : t.palette;
+  document.getElementById('cfg-mouth').value = cfg.traits && cfg.traits.mouth !== undefined ? cfg.traits.mouth : t.mouth;
+  document.getElementById('cfg-bg').value = cfg.bg || pal.bg;
+  for (const [key] of SLIDERS) {
+    document.getElementById('s-' + key).value = SENS[key];
+    document.getElementById('v-' + key).textContent = SENS[key].toFixed(2);
+  }
+}
+
+document.getElementById('btn-random').addEventListener('click', () => setTimeout(initPanel, 0));
 
 const h = window.location.hash.slice(1);
 loadCritter(/^[0-9a-z]{6,10}$/.test(h) ? h : randomId());
+initPanel();
 requestAnimationFrame(frame);
 startTracking();
 </script>
