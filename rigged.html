@@ -184,7 +184,10 @@ function loadCritter(id) {
 }
 
 const sig = { blinkL: 1, blinkR: 1, mouth: 0, mouthW: 0, expr: 0, yaw: 0, pitch: 0, roll: 0, gx: 0, gy: 0, hx: 0, hy: 0, joy: 0, sad: 0, surprise: 0, anger: 0, wide: 0, pucker: 0, stretch: 0, jawX: 0, funnel: 0 };
-let calib = null, calibFrames = 0, calibAcc = { ear: 0, mouth: 0, yaw: 0, pitch: 0, roll: 0, hx: 0, hy: 0, mouthW: 0, gx: 0, gy: 0 };
+let calib = null, calibFrames = 0, calibAcc = { ear: 0, mouth: 0, yaw: 0, pitch: 0, roll: 0, hx: 0, hy: 0, mouthW: 0, gx: 0, gy: 0, jawB: 0, jawMax: 0, jawMaxM: 0, stretchMax: 0, puckerMax: 0 };
+let calPhase = 0;
+let profile = null;
+try { profile = JSON.parse(localStorage.getItem('critter-face-profile') || 'null'); } catch (e) {}
 let tracking = false;
 const mouse = { x: 0, y: 0, down: false };
 window.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
@@ -229,29 +232,62 @@ function processLandmarks(lm, bs) {
   }
 
   if (!calib) {
+    const PHASE_LEN = [50, 70, 70, 70];
+    const PHASE_TXT = [
+      'calibração 1/4 — cara neutra, olha para a câmara…',
+      'calibração 2/4 — abre a boca ao MÁXIMO (aaa)!',
+      'calibração 3/4 — estica os lábios (eee)!',
+      'calibração 4/4 — faz biquinho (ooo)!'
+    ];
     calibFrames++;
-    calibAcc.ear += (earL + earR) / 2;
-    calibAcc.mouth += mouthR;
-    calibAcc.yaw += yawRaw; calibAcc.pitch += pitchRaw; calibAcc.roll += rollRaw;
-    calibAcc.hx += hxRaw; calibAcc.hy += hyRaw; calibAcc.mouthW += mouthW;
-    calibAcc.gx += gazeX; calibAcc.gy += gazeY;
-    if (calibFrames >= 50) {
-      const n = calibFrames;
-      calib = {
-        ear: calibAcc.ear / n, mouth: calibAcc.mouth / n, mouthW: calibAcc.mouthW / n,
-        yaw: calibAcc.yaw / n, pitch: calibAcc.pitch / n, roll: calibAcc.roll / n,
-        hx: calibAcc.hx / n, hy: calibAcc.hy / n,
-        gx: calibAcc.gx / n, gy: calibAcc.gy / n
-      };
-      setStatus('tracking — express yourself');
+    if (calPhase === 0) {
+      calibAcc.ear += (earL + earR) / 2;
+      calibAcc.mouth += mouthR;
+      calibAcc.yaw += yawRaw; calibAcc.pitch += pitchRaw; calibAcc.roll += rollRaw;
+      calibAcc.hx += hxRaw; calibAcc.hy += hyRaw; calibAcc.mouthW += mouthW;
+      calibAcc.gx += gazeX; calibAcc.gy += gazeY;
+      if (bs) calibAcc.jawB += bs.jawOpen;
+    } else if (calPhase === 1) {
+      calibAcc.jawMax = Math.max(calibAcc.jawMax, bs ? bs.jawOpen : 0);
+      calibAcc.jawMaxM = Math.max(calibAcc.jawMaxM, mouthR);
+    } else if (calPhase === 2) {
+      calibAcc.stretchMax = Math.max(calibAcc.stretchMax, bs ? (bs.mouthStretchLeft + bs.mouthStretchRight) / 2 : 0);
+    } else if (calPhase === 3) {
+      calibAcc.puckerMax = Math.max(calibAcc.puckerMax, bs ? bs.mouthPucker : 0);
+    }
+    setStatus(PHASE_TXT[calPhase]);
+    if (calibFrames >= PHASE_LEN[calPhase]) {
+      calibFrames = 0;
+      calPhase++;
+      if (calPhase >= (profile ? 1 : 4)) {
+        const n = 50;
+        calib = {
+          ear: calibAcc.ear / n, mouth: calibAcc.mouth / n, mouthW: calibAcc.mouthW / n,
+          yaw: calibAcc.yaw / n, pitch: calibAcc.pitch / n, roll: calibAcc.roll / n,
+          hx: calibAcc.hx / n, hy: calibAcc.hy / n,
+          gx: calibAcc.gx / n, gy: calibAcc.gy / n,
+          ranges: profile ? profile.ranges : {
+            jaw: Math.max(0.15, calibAcc.jawMax * 0.9),
+            jawM: Math.max(calibAcc.mouth / n * 1.6, calibAcc.jawMaxM * 0.92),
+            stretch: Math.max(0.2, calibAcc.stretchMax * 0.85),
+            pucker: Math.max(0.2, calibAcc.puckerMax * 0.85)
+          }
+        };
+        calib.ranges.jawRestB = calibAcc.jawB / n;
+        if (!profile) {
+          profile = { ranges: calib.ranges };
+          try { localStorage.setItem('critter-face-profile', JSON.stringify(profile)); } catch (e) {}
+        }
+        setStatus('tracking — express yourself');
+      }
     }
     return;
   }
 
   if (bs) {
-    const jaw = clamp((bs.jawOpen - 0.03) * 1.05 * SENS.mouthGain, 0, 1);
+    const jaw = clamp(Math.pow(clamp((bs.jawOpen - calib.ranges.jawRestB) / Math.max(0.05, calib.ranges.jaw - calib.ranges.jawRestB), 0, 1), 0.9) * SENS.mouthGain, 0, 1);
     const press = clamp(bs.mouthClose + (bs.mouthPressLeft + bs.mouthPressRight) / 2, 0, 1);
-    const pucker = clamp(bs.mouthPucker, 0, 1);
+    const pucker = clamp(bs.mouthPucker / calib.ranges.pucker, 0, 1);
     sig.funnel += (clamp(bs.mouthFunnel, 0, 1) - sig.funnel) * 0.4;
     const openT = jaw * (1 - 0.6 * press) * (1 - 0.35 * pucker);
     sig.mouth += (openT - sig.mouth) * clamp((openT > sig.mouth ? 0.55 : 0.3) * SENS.smooth, 0.05, 1);
@@ -268,7 +304,7 @@ function processLandmarks(lm, bs) {
     sig.surprise += (clamp(wide * 0.9 + browUp * 0.9, 0, 1) - sig.surprise) * 0.3;
     sig.anger += (clamp((bs.browDownLeft + bs.browDownRight) * 0.9, 0, 1) - sig.anger) * 0.3;
     sig.wide += (clamp(wide * 1.5, 0, 1) - sig.wide) * 0.3;
-    const stretch = clamp((bs.mouthStretchLeft + bs.mouthStretchRight) / 2, 0, 1);
+    const stretch = clamp((bs.mouthStretchLeft + bs.mouthStretchRight) / 2 / calib.ranges.stretch, 0, 1);
     sig.pucker += (pucker - sig.pucker) * 0.4;
     sig.stretch += (stretch - sig.stretch) * 0.4;
     sig.mouthW += (clamp((stretch - pucker) * 0.8, -0.5, 0.5) - sig.mouthW) * 0.3;
@@ -280,7 +316,7 @@ function processLandmarks(lm, bs) {
     const tBlinkR = clamp((earR - calib.ear * 0.45) / (calib.ear * 0.45), 0.05, 1);
     sig.blinkL += (tBlinkL - sig.blinkL) * 0.45;
     sig.blinkR += (tBlinkR - sig.blinkR) * 0.45;
-    const openT = clamp(Math.pow(clamp((mouthR - calib.mouth * 1.1) / 0.05, 0, 1), 0.8), 0, 1);
+    const openT = clamp(Math.pow(clamp((mouthR - calib.mouth * 1.1) / Math.max(0.01, calib.ranges.jawM - calib.mouth * 1.1), 0, 1), 0.8), 0, 1);
     sig.mouth += (openT - sig.mouth) * (openT > sig.mouth ? 0.6 : 0.25);
     const wT = clamp((mouthW - calib.mouthW) / calib.mouthW, -0.25, 0.4);
     sig.mouthW += (wT - sig.mouthW) * 0.3;
@@ -471,8 +507,10 @@ function savePng() {
 document.getElementById('btn-random').addEventListener('click', () => loadCritter(randomId()));
 document.getElementById('btn-save').addEventListener('click', savePng);
 document.getElementById('btn-recal').addEventListener('click', () => {
-  calib = null; calibFrames = 0; calibAcc = { ear: 0, mouth: 0, yaw: 0, pitch: 0, roll: 0, hx: 0, hy: 0, mouthW: 0, gx: 0, gy: 0 };
-  if (tracking) setStatus('calibrating — look neutral at the camera…');
+  profile = null; calPhase = 0;
+  try { localStorage.removeItem('critter-face-profile'); } catch (e) {}
+  calib = null; calibFrames = 0; calibAcc = { ear: 0, mouth: 0, yaw: 0, pitch: 0, roll: 0, hx: 0, hy: 0, mouthW: 0, gx: 0, gy: 0, jawB: 0, jawMax: 0, jawMaxM: 0, stretchMax: 0, puckerMax: 0 };
+  if (tracking) setStatus('calibração 1/4 — cara neutra, olha para a câmara…');
 });
 document.getElementById('btn-back').addEventListener('click', () => { window.location.href = 'index.html' + window.location.hash; });
 document.getElementById('btn-studio').addEventListener('click', () => { window.location.href = 'studio.html' + window.location.hash; });
