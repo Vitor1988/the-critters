@@ -50,7 +50,7 @@ cv.width = CW * POSES.length; cv.height = CH * ids.length;
 ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
 
 const SENS = Object.assign({}, SENS_DEFAULTS);
-for (const k of ['lean', 'headMove', 'sphere', 'visemes']) if (q.get(k) !== null) SENS[k] = +q.get(k);
+for (const k of ['lean', 'headMove', 'sphere']) if (q.get(k) !== null) SENS[k] = +q.get(k);
 
 const traits = q.get('mouth') === null ? undefined : { mouth: +q.get('mouth') };
 
@@ -68,7 +68,7 @@ ids.forEach((id, row) => {
     ctx.fillStyle = model.palette.bg;
     ctx.fillRect(0, 0, CW, CH);
     ctx.fillStyle = '#000';
-    ctx.fillText(model.mouth.style + ' · ' + name + (SENS.visemes >= 0.5 ? ' · visemes' : ''), 6, 12);
+    ctx.fillText(model.mouth.style + ' · ' + name, 6, 12);
     /* mesma câmara que o rig-page, à escala da célula */
     const S = CW / 340;
     const shift = rigHeadShift(sig, SENS);

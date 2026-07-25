@@ -1153,6 +1153,8 @@ function buildRig(model) {
     }
     const n = chain.length;
     const c = rigCentroid(chain);
+    /* w: peso do ponto na abertura (0 nos cantos), usado só para medir os budgets aqui —
+       na deformação o perfil vem do viseme. uu: posição ao longo da cadeia. */
     const w = [], uu = [];
     for (let i = 0; i < n; i++) {
       w.push(Math.pow(Math.sin(Math.PI * i / (n - 1)), 1.3));
@@ -1184,7 +1186,7 @@ function buildRig(model) {
       pts: chain.map(p => [p[0], p[1]]).concat(chain.map(p => [p[0], p[1]]).reverse()),
       offs: offs.concat(offs.slice().reverse()),
       basePts: chain.map(p => [p[0], p[1]]),
-      half: n, w, u: uu,
+      half: n, u: uu,
       halfW: Math.max(2, (rigBounds(chain).x1 - rigBounds(chain).x0) / 2),
       corner0: chain[0][1], corner1: chain[n - 1][1],
       closed: true, lw: lips[0].sh.lw, alpha: 1, alphaMul: 1, intensity: 5, jit: 0,
@@ -1237,35 +1239,29 @@ function applyRig(model, rig, sig, SENS) {
     br.sh.drop = (sig.anger - sig.sad) * 10;
   }
 
-  const open = rigClamp(sig.mouth * SENS.openHeight * (1 + sig.funnel * 0.3), 0, 1);
   const width = 1 + sig.mouthW * 0.55 * SENS.mouthWidth + Math.max(0, sig.expr) * 0.1;
-  const wx = width * (1 - sig.pucker * 0.45 * SENS.puckerFx);
-  const round = Math.min(0.9, sig.funnel * 0.85 + sig.pucker * 0.6);
   const smile = rigClamp(sig.expr, -1, 1);
   const shiftX = sig.jawX * 10;
   rig.jawDrop = 0;
 
-  /* toggle: com visemes ligados é o solver de vogais que comanda a abertura de qualquer
-     boca, em vez do simples abrir/fechar. A boca 'rigged' usa-o sempre — é o que ela é. */
-  const visOn = SENS.visemes >= 0.5;
-  const D = (visOn || rig.viseme) ? rigVisemeDrive(sig, SENS) : null;
+  /* Os visemes comandam a abertura de qualquer boca — não há segundo caminho. O simples
+     abrir/fechar existia antes deles e não sobreviveu à comparação. */
+  const D = rigVisemeDrive(sig, SENS);
+  const wx = width * D.rx;
 
   const L = rig.lip;
   if (L) {
-    let dn = L.down * open, up = L.up * open, lwx = wx;
-    if (visOn) {
-      lwx = width * D.rx;
-      const H = D.amount * D.ratio * 2 * L.halfW * lwx * SENS.openHeight;
-      up = Math.min(H * D.upShare, L.up);
-      dn = Math.min(H - H * D.upShare, L.down);
-    }
+    const H = D.amount * D.ratio * 2 * L.halfW * wx * SENS.openHeight;
+    const up = Math.min(H * D.upShare, L.up);
+    const dn = Math.min(H - H * D.upShare, L.down);
     const lift = smile * (smile > 0 ? L.liftUp : L.liftDown);
+    const openK = L.down > 0 ? rigClamp(dn / L.down, 0, 1) : 0;
     const n = L.half;
     for (let i = 0; i < L.pts.length; i++) {
       const k = i < n ? i : 2 * n - 1 - i;
       const b = L.basePts[k];
-      const w = visOn ? rigProfile(-1 + 2 * L.u[k], D.p) : L.w[k];
-      L.pts[i][0] = L.cx + (b[0] - L.cx) * lwx;
+      const w = rigProfile(-1 + 2 * L.u[k], D.p);
+      L.pts[i][0] = L.cx + (b[0] - L.cx) * wx;
       if (i < n) {
         L.pts[i][1] = b[1] - up * w - lift * (1 - w);
       } else {
@@ -1273,7 +1269,7 @@ function applyRig(model, rig, sig, SENS) {
            vai deixando de copiar o desenho de cima (os dois lóbulos da 'w', os dentes da
            'zigzag') e assenta na linha entre os cantos */
         const flat = L.corner0 + (L.corner1 - L.corner0) * L.u[k];
-        const y = b[1] + (flat - b[1]) * open * 0.8;
+        const y = b[1] + (flat - b[1]) * openK * 0.8;
         L.pts[i][1] = y + dn * w - lift * (1 - w);
       }
     }
@@ -1317,30 +1313,21 @@ function applyRig(model, rig, sig, SENS) {
 
   const H = rig.holes[0] || null;
   for (const hole of rig.holes) {
-    let RX = hole.baseRx * wx, hRound = round;
-    let RYd = Math.min(hole.baseRy * (0.12 + 1.75 * open), hole.downMax);
-    let RYu = Math.min(hole.baseRy * (0.12 + 0.55 * open), hole.upMax);
-    if (visOn) {
-      /* o viseme já traz a forma (o "O" é redondo pela proporção), portanto o blend
-         circular do pucker fica de fora — senão arredondava duas vezes */
-      RX = hole.baseRx * width * D.rx;
-      const shut = hole.baseRy * 0.12;
-      const H = D.amount * D.ratio * 2 * RX * SENS.openHeight;
-      RYu = rigClamp(H * D.upShare, shut, hole.upMax);
-      RYd = rigClamp(H - H * D.upShare, shut, hole.downMax);
-      hRound = 0;
-    }
-    const RC = Math.min(RX, (RYd + RYu) / 2);
+    /* o viseme já traz a forma — o "O" é redondo pela proporção — portanto não há aqui
+       nenhum blend circular do pucker: arredondaria duas vezes */
+    const RX = hole.baseRx * wx;
+    const shut = hole.baseRy * 0.12;
+    const H = D.amount * D.ratio * 2 * RX * SENS.openHeight;
+    const RYu = rigClamp(H * D.upShare, shut, hole.upMax);
+    const RYd = rigClamp(H - H * D.upShare, shut, hole.downMax);
     const lift = smile * (smile > 0 ? hole.liftUp : hole.liftDown);
     for (let i = 0; i < hole.pts.length; i++) {
       const b = hole.basePts[i];
       const nx = (b[0] - hole.baseCx) / hole.baseRx;
       const ny = (b[1] - hole.baseCy) / hole.baseRy;
-      const rad = Math.hypot(nx, ny) || 1;
-      const RY = ny < 0 ? RYu : RYd;
       const corner = Math.abs(nx) * (1 - Math.min(1, Math.abs(ny)));
-      hole.pts[i][0] = hole.baseCx + nx * RX * (1 - hRound) + (nx / rad) * RC * hRound + shiftX;
-      hole.pts[i][1] = hole.baseCy + ny * RY * (1 - hRound) + (ny / rad) * RC * hRound - lift * corner;
+      hole.pts[i][0] = hole.baseCx + nx * RX + shiftX;
+      hole.pts[i][1] = hole.baseCy + ny * (ny < 0 ? RYu : RYd) - lift * corner;
     }
     hole.sx = 1; hole.sy = 1; hole.ox = 0; hole.oy = 0;
     if (hole === H) rig.jawDrop = RYd - hole.baseRy * 0.12;
@@ -1445,7 +1432,7 @@ function drawModel(ctx, model, sig, SENS, frozen) {
   if (clipped) ctx.restore();
 }
 
-const SENS_DEFAULTS = { mouthGain: 1, mouthWidth: 1, openHeight: 1, puckerFx: 1, gazeGain: 1, blinkGain: 1, headGain: 1, headMove: 1, sphere: 1, lean: 1, smooth: 1, visemes: 0 };
+const SENS_DEFAULTS = { mouthGain: 1, mouthWidth: 1, openHeight: 1, puckerFx: 1, gazeGain: 1, blinkGain: 1, headGain: 1, headMove: 1, sphere: 1, lean: 1, smooth: 1 };
 /* ---------- favoritos (localStorage, partilhados pelas três páginas) ---------- */
 const FAVS_KEY = 'critter-favs';
 const FAVS_MAX = 60;

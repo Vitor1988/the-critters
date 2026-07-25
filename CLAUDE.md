@@ -31,6 +31,8 @@ step: os ficheiros são o artefacto.
 - **O rig nunca identifica peças pela cor.** As peças da boca são marcadas no `buildModel`
   (`part: lip|hole|teeth|tongue|throat|rigMouth`). A paleta noir tem `teeth === line`, e a
   versão antiga tratava os dentes como buraco da boca.
+- **A abertura de qualquer boca vem dos visemes** (`rigVisemeDrive`) — não há caminho
+  alternativo de abrir/fechar.
 - **A boca não sai da cara por construção**, não por um limite fixo: os budgets de abertura
   são medidos na bind pose, no `buildRig`, a partir do espaço real entre nariz e queixo.
 - **A câmara exige contexto seguro** — `https`, `localhost` ou `file://`. Por http num IP

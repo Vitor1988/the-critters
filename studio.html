@@ -35,8 +35,6 @@ button.rec-on{background:#c0261e}
 .p-row span{display:block;margin-bottom:3px}
 .p-row select,.p-row input[type=range]{width:100%}
 .p-row input[type=color]{width:100%;height:26px;border:1px solid #000;background:none;padding:0}
-.p-check label{display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:900}
-.p-check input{width:14px;height:14px;margin:0}
 @media (max-width:600px){.panel{width:180px;font-size:11px}}
 </style>
 </head>
@@ -61,7 +59,6 @@ button.rec-on{background:#c0261e}
     <summary>studio config</summary>
     <div class="p-row"><span>palette</span><select id="cfg-palette"></select></div>
     <div class="p-row"><span>mouth</span><select id="cfg-mouth"></select></div>
-    <div class="p-row p-check"><label><input type="checkbox" id="cfg-visemes"> visemes (A/E/I/O/U)</label></div>
     <div class="p-row"><span>background</span><input type="color" id="cfg-bg"></div>
     <div id="sliders"></div>
   </details>
@@ -88,7 +85,6 @@ const SLIDERS = [
 const palSel = document.getElementById('cfg-palette');
 const mouthSel = document.getElementById('cfg-mouth');
 const bgInput = document.getElementById('cfg-bg');
-const visChk = document.getElementById('cfg-visemes');
 
 PALETTES.forEach((p, i) => palSel.add(new Option(p.name, i)));
 MOUTH_STYLES.forEach((m, i) => mouthSel.add(new Option(m, i)));
@@ -117,7 +113,6 @@ function syncPanel(p) {
   palSel.value = cfg.traits && cfg.traits.palette !== undefined ? cfg.traits.palette : t.palette;
   mouthSel.value = cfg.traits && cfg.traits.mouth !== undefined ? cfg.traits.mouth : t.mouth;
   bgInput.value = p.pal.bg;
-  visChk.checked = p.SENS.visemes >= 0.5;
   for (const [key] of SLIDERS) {
     document.getElementById('s-' + key).value = p.SENS[key];
     document.getElementById('v-' + key).textContent = p.SENS[key].toFixed(2);
@@ -134,13 +129,6 @@ function setTrait(name, value) {
 }
 palSel.addEventListener('change', () => setTrait('palette', +palSel.value));
 mouthSel.addEventListener('change', () => setTrait('mouth', +mouthSel.value));
-visChk.addEventListener('change', () => {
-  const v = visChk.checked ? 1 : 0;
-  page.SENS.visemes = v;
-  const c = loadCritterCfg(page.id);
-  c.sens = Object.assign({}, c.sens, { visemes: v });
-  saveCritterCfg(page.id, c);
-});
 bgInput.addEventListener('input', e => {
   const c = loadCritterCfg(page.id);
   c.bg = e.target.value;

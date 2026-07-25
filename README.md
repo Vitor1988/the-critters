@@ -45,8 +45,9 @@ Todas as peças da boca são marcadas na engine (`part: lip | hole | teeth | ton
 no momento em que são desenhadas — o rig nunca as adivinha pela cor, que colide entre si
 em algumas paletas.
 
-- **cantos ancorados** — o peso por ponto é `sin(πu)^1.3`: 1 no centro, 0 nos cantos. A
-  mandíbula nunca arrasta os cantos da boca, é o que evita a boca a "deslizar" pela cara
+- **cantos ancorados** — o perfil da abertura é 0 nos cantos (superelipse do viseme; o
+  `sin(πu)^1.3` sobrevive só para medir os budgets). A mandíbula nunca arrasta os cantos,
+  é o que evita a boca a "deslizar" pela cara
 - **budget de abertura calculado na bind pose** — no `buildRig` mede-se o espaço real entre
   o nariz e o queixo e reparte-se 75% para o lábio de baixo, o resto para o de cima. A boca
   não pode sair do contorno da cara por construção, em vez de por um limite fixo
@@ -136,17 +137,16 @@ Amplitude de `sig.mouth` numa fala simulada a 4 sílabas/s:
 
 Repare-se na coluna do auto-range: 0.45 dá *mais* que 0.80. Não era monótono.
 
-### visemes — o toggle
+### visemes — como toda a boca abre
 
-O checkbox **`visemes (A/E/I/O/U)`** no studio troca o que comanda a abertura de **qualquer**
-boca: em vez do simples abrir/fechar, passa a ser o solver de vogais. Funciona nas três
-famílias — as de arco (`smile`, `chill`, `w`, …), as de buraco (`open`, `o`, `grin`) e a
-`rigged` — porque o `rigVisemeDrive` devolve os mesmos parâmetros (largura, proporção,
-repartição entre lábios, expoente do perfil) e cada família aplica-os à sua geometria.
-O desenho de cada boca mantém-se: é o mesmo `w`, com as vogais por baixo.
+Os visemes comandam a abertura de **todas** as bocas; não há segundo caminho. O
+`rigVisemeDrive` devolve os mesmos parâmetros (largura, proporção, repartição entre lábios,
+expoente do perfil) e cada família de boca aplica-os à sua geometria — as de arco (`smile`,
+`chill`, `w`, …), as de buraco (`open`, `o`, `grin`) e a `rigged`. O desenho de cada boca
+mantém-se: é o mesmo `w`, com as vogais por baixo.
 
-Com o toggle desligado nada muda em relação ao comportamento antigo. A boca `rigged` usa
-os visemes sempre — é o que ela é.
+Houve um período com um toggle e o antigo abrir/fechar por trás. O antigo não sobreviveu à
+comparação e saiu — dois caminhos para a mesma coisa é código a mais para manter.
 
 ### a boca `rigged` (visemes)
 
