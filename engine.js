@@ -475,7 +475,7 @@ function buildModel(id, opts) {
   }
 
   const mouthStart = shapes.length;
-  const mouthStyle = t.mouth === 'rig' ? 'rig' : MOUTH_STYLES[t.mouth];
+  const mouthStyle = MOUTH_STYLES[t.mouth];
   const my = myBase, mw = Math.min(34, mouthRx * 0.55), mh = 24;
   const smileArcY = (tx) => my - 12 + mh * Math.sin(Math.PI * Math.max(0, Math.min(1, (tx + mw) / (2 * mw))));
   let teethCurve = null, teethH = 0;
@@ -529,8 +529,6 @@ function buildModel(id, opts) {
       addShape(shapes, wobblyPoly([[tx - 6, my - 4 - mh * 0.4], [tx + 6, my - 4 - mh * 0.4], [tx, my - 4 + mh * 0.12]], 2, 1.8, rng),
         { fill: pal.teeth, stroke: null }, rng, 8);
     }
-  } else if (mouthStyle === 'rig') {
-    addShape(shapes, wobblyArc(0, my - 6, mw * 0.85, 3.5, 0.06, Math.PI - 0.06, 14, 1.2, rng), { fill: null, stroke: pal.line, closed: false, lw: 3.5 }, rng, 8);
   } else if (mouthStyle === 'smirk') {
     addShape(shapes, wobblyArc(mw * 0.3, my - 10, mw * 0.7, mh * 0.75, 0.15, Math.PI * 0.85, 10, 3.5, rng, -0.12),
       { fill: null, stroke: pal.line, closed: false, lw: 3.5 }, rng, 8);
