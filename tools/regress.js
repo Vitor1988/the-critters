@@ -17,50 +17,29 @@ const fs = require('fs');
 const path = require('path');
 const { loadEngine } = require('./lib/shim');
 const { mkLm, mkBs, fresh } = require('./lib/fixtures');
+const { POSE, corre: corre0, vale, assercoesV3 } = require('./lib/guardas');
 
 const GOLDENS = path.join(__dirname, 'goldens.json');
 const eng = loadEngine();
 const S0 = eng.SENS_DEFAULTS;
 const sens = o => Object.assign({}, S0, o || {});
 
-/* ---------- vocabulario de poses ---------- */
-/* cada entrada e [gap entre os labios interiores, blendshapes] — o par que a cadeia consome */
-const POSE = {
-  repouso:    [0.002, { jawOpen: 0.05 }],
-  vogal:      [0.014, { jawOpen: 0.18 }],
-  vogalPress: [0.014, { jawOpen: 0.18, mouthClose: 0.25, mouthPressLeft: 0.05, mouthPressRight: 0.05 }],
-  vogalSorri: [0.014, { jawOpen: 0.18, mouthSmileLeft: 0.25, mouthSmileRight: 0.25 }],
-  escancara:  [0.030, { jawOpen: 0.45, mouthClose: 0.3 }],
-  selada:     [0.002, { jawOpen: 0.55, mouthClose: 0.6, mouthPressLeft: 0.3, mouthPressRight: 0.3 }],
-  bilabial:   [0.001, { jawOpen: 0.10, mouthClose: 0.55, mouthPressLeft: 0.4, mouthPressRight: 0.4,
-                        mouthRollLower: 0.3, mouthRollUpper: 0.3 }],
-  eee:        [0.008, { jawOpen: 0.10, mouthSmileLeft: 0.6, mouthSmileRight: 0.6,
-                        mouthStretchLeft: 0.12, mouthStretchRight: 0.12 }],
-  ooo:        [0.012, { jawOpen: 0.15, mouthPucker: 0.6, mouthFunnel: 0.4 }],
-  fecho:      [0.002, { jawOpen: 0.05, mouthClose: 0.4 }],
-  baixinho:   [0.006, { jawOpen: 0.09, mouthClose: 0.1 }]
-};
-
-function passo(sig, cal, S, nome) {
+/* as poses e o motor de sequencias vivem em lib/guardas.js — partilhados com o
+   grid-search, que precisa exactamente das mesmas definicoes */
+const passo = (sig, cal, S, nome) => {
   const [gap, bs] = POSE[nome];
   eng.processLandmarks(mkLm(gap), mkBs(bs), sig, cal, S);
-}
+};
+const corre = (S, seq) => corre0(eng, S, seq);
 
-/* corre uma sequencia [[pose, n], ...]; devolve o estado final e a serie do sig.mouth */
-function corre(S, seq) {
-  const { sig, cal } = fresh(eng, S);
-  const serie = [];
-  for (const [nome, n] of seq) {
-    for (let i = 0; i < n; i++) { passo(sig, cal, S, nome); serie.push(sig.mouth); }
-  }
-  return { sig, cal, serie };
-}
-
-/* dump completo do sig + pesos dos visemes: apanha regressoes fora da boca tambem */
+/* dump completo do sig + pesos dos visemes: apanha regressoes fora da boca tambem.
+   So os campos numericos: o `sig` guarda tambem o estado interno dos filtros da v3
+   (um objecto, nulo na v1/v2), que e implementacao e nao sinal. Como todos os sinais
+   sao numeros, este filtro nao muda um unico valor dos goldens ja gravados. */
 function dump(sig, S) {
   const w = eng.rigVisemeWeights(sig, S);
   const out = {};
-  for (const k of Object.keys(sig).sort()) out[k] = sig[k];
+  for (const k of Object.keys(sig).sort()) if (typeof sig[k] === 'number') out[k] = sig[k];
   for (const k of Object.keys(w).sort()) out['w_' + k] = w[k];
   return out;
 }
@@ -150,55 +129,9 @@ for (const [tag, o] of [['v1', {}], ['v2', { speechV2: 1 }]]) {
 }
 
 /* ---------- assercoes da v3 (propriedades, nao numeros congelados) ---------- */
-/* so correm quando o engine ja tem a v3; antes disso a seccao e saltada */
-function verificaV3() {
-  const temV3 = 'speechV3' in S0;
-  if (!temV3) return { saltado: true, linhas: [] };
-  const V1 = sens(), V3 = sens({ speechV3: 1 });
-  const m = (S, pose, n) => corre(S, [[pose, n || 40]]).sig;
-  const linhas = [];
-  const teste = (nome, ok, detalhe) => linhas.push({ nome, ok, detalhe });
-
-  const selada3 = m(V3, 'selada');
-  teste('selada fecha', selada3.mouth < 0.06, 'mouth=' + selada3.mouth.toFixed(3) + ' (<0.06)');
-
-  const bil3 = m(V3, 'bilabial');
-  teste('bilabial fecha', bil3.mouth < 0.10, 'mouth=' + bil3.mouth.toFixed(3) + ' (<0.10)');
-  teste('bilabial marca press', bil3.press > 0.35, 'press=' + bil3.press.toFixed(3) + ' (>0.35)');
-
-  const vog1 = m(V1, 'vogal'), vog3 = m(V3, 'vogal');
-  teste('vogal limpa nao perde vs v1', vog3.mouth >= vog1.mouth * 0.9,
-    'v3=' + vog3.mouth.toFixed(3) + ' vs v1=' + vog1.mouth.toFixed(3) + ' (>=90%)');
-
-  const pr1 = m(V1, 'vogalPress'), pr3 = m(V3, 'vogalPress');
-  teste('press cronico sem tecto', pr3.mouth > pr1.mouth,
-    'v3=' + pr3.mouth.toFixed(3) + ' vs v1=' + pr1.mouth.toFixed(3));
-
-  const esc1 = m(V1, 'escancara'), esc3 = m(V3, 'escancara');
-  teste('escancarada usa mais curso que a v1', esc3.mouth > esc1.mouth,
-    'v3=' + esc3.mouth.toFixed(3) + ' vs v1=' + esc1.mouth.toFixed(3));
-
-  /* silencio prolongado: sem flicker significa serie plana no fim */
-  const sil = corre(V3, [['repouso', 60]]).serie.slice(-30);
-  const amp = Math.max.apply(null, sil) - Math.min.apply(null, sil);
-  teste('silencio sem flicker', amp < 0.01, 'amplitude=' + amp.toFixed(4) + ' (<0.01)');
-
-  /* a v3 tem de continuar a fechar entre silabas — o vale nao pode subir face a v1 */
-  const vale = S => {
-    const { sig, cal } = fresh(eng, S);
-    let mn = 1;
-    for (let c = 0; c < 40; c++) {
-      for (let i = 0; i < 4; i++) passo(sig, cal, S, 'vogal');
-      for (let i = 0; i < 3; i++) { passo(sig, cal, S, 'fecho'); if (c > 2) mn = Math.min(mn, sig.mouth); }
-    }
-    return mn;
-  };
-  const va1 = vale(V1), va3 = vale(V3);
-  teste('vale entre silabas nao sobe', va3 <= va1 + 0.05,
-    'v3=' + va3.toFixed(3) + ' vs v1=' + va1.toFixed(3));
-
-  return { saltado: false, linhas };
-}
+/* definidas em lib/guardas.js: o grid-search usa-as como guardas duros, e e por isso
+   que tem de ser as mesmas e nao uma copia */
+const verificaV3 = () => assercoesV3(eng);
 
 /* ---------- gravar ou comparar ---------- */
 const escrever = process.argv.includes('--write');

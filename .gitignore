@@ -1,5 +1,6 @@
 tools/.venv/
 tools/clips/
+tools/models/
 tools/traces/
 tools/out/
 __pycache__/

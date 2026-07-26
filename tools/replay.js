@@ -160,7 +160,9 @@ function replay(tr, opts) {
   return out;
 }
 
-module.exports = { carrega, replay, fazCalib, MODOS };
+/* `eng` sai daqui para o grid-search poder mexer no RIG_V3 desta MESMA instancia do
+   engine — carregar uma segunda daria outro objecto e as afinacoes nao teriam efeito */
+module.exports = { carrega, replay, fazCalib, MODOS, eng };
 
 /* ---------- CLI ---------- */
 if (require.main === module) {
