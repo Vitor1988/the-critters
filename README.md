@@ -177,12 +177,114 @@ Amplitude de `sig.mouth` numa fala simulada a 4 sílabas/s:
 
 Repare-se na coluna do auto-range: 0.45 dá *mais* que 0.80. Não era monótono.
 
+### a bancada (`tools/`) — porque a simulação sintética já não decide nada
+
+Aquela tabela é de fala *simulada*, e é essa a raiz das cicatrizes acima: duas alterações
+passaram nos números e prenderam a boca na cara real. A bancada existe para que a próxima
+proposta seja medida em **vídeo de pessoas mesmo a falar** antes de chegar à câmara.
+
+O caminho é `vídeo → traces → replay → métricas`. Os traces saem do **mesmo** modelo do
+MediaPipe que as páginas carregam da CDN (`capture.py`, `face_landmarker` float16/1, modo
+VIDEO, blendshapes ligados) — um trace de outra versão não representa produção. O replay
+(`replay.js`) passa-os pela cadeia real do `engine.js`, sem cópia: o `regress.js` carrega o
+ficheiro de produção por `eval` porque o engine é classic script e não exporta nada. Duas
+decisões que mudam os números e por isso estão lá escritas: **o relógio é o do loop, não o
+do vídeo** (ao vivo o `frame()` corre a 60 Hz e a câmara debita 30, portanto cada frame
+passa pela cadeia duas vezes) e **a calibração é injectada** a partir dos percentis do
+próprio clip (os actores já estão a falar ao segundo zero; os 50 frames de cara parada do
+live não existem ali).
+
+Contra o que se mede: o envelope do áudio do mesmo clip. `r` de Pearson (a boca segue a
+voz?), `lag` por correlação cruzada, `alcance` p95−p5 dentro da fala, `jitter` (RMS da 2ª
+diferença — sobe com tremor, não com rampas) e `fecho` (fracção dos vales do envelope em
+que a boca de facto fecha). Dataset: 16 clips do RAVDESS, actores 01 e 02, **12 de treino
+e 4 em holdout** — o holdout nunca entra na afinação, é a única leitura honesta de quanto
+isto generaliza. Paridade Python↔browser verificada num clip (`_parity.html`).
+
+O que a bancada mede *não* é a cara dele a falar português. Serve para rejeitar más ideias
+em minutos, não para aprovar boas — a aprovação continua a ser o A/B ao vivo.
+
+### `fala v3` (select no studio, `v1` por omissão)
+
+Terceira cadeia, atrás do select `fala`, desenhada e afinada na bancada. Quatro mudanças,
+cada uma contra um modo de falha medido:
+
+- **o `mouthClose` desconta-se ao queixo, não trava depois da fusão.** No ARKit ele
+  significa "os lábios fecham *apesar* do queixo estar aberto"; a v1 trata-o como ruído e
+  é isso que põe o tecto que a v2 já tinha diagnosticado. Aqui entra como
+  `jawOpen − 1.1·mouthClose`, com a linha de base calibrada pela mesma combinação para o
+  repouso desta cara continuar a dar zero
+- **oclusão M/B/P como sinal próprio** — `mouthClose` que o queixo não explica, mais os
+  lábios enrolados (`mouthRoll*`), mais o press, com uma zona morta de 0.15. Sem a zona
+  morta a v3 repetia a cicatriz: descontar o `mouthClose` ao queixo *e* fechar com ele
+  outra vez, o que cortava um quarto da abertura de uma vogal limpa
+- **filtros em milissegundos, não em frames.** One Euro nos sinais crus (parado filtra
+  muito, em movimento deixa passar o ataque da sílaba) e EMA assimétrico dt-aware no alvo.
+  A v1 muda de comportamento entre 30 e 60 fps porque os coeficientes são por frame; a v3
+  não — o `rig-page.js` passa o dt real, preso entre 8 e 50 ms
+- **E vs sorriso por baseline lenta** — quem fala a sorrir tem um sorriso *lento* por
+  baixo e o "eee" é um evento por cima dele. Uma constante de 2 s separa os dois, em vez
+  da zona morta fixa de 0.25 da v1, e um gate por abertura impede que um sorriso de boca
+  fechada roube altura às vogais
+
+Os parâmetros (`RIG_V3`) não são escolhas de gosto: saíram de uma grelha de 324
+combinações sobre os 12 clips de treino, com **guardas duros antes do score** — qualquer
+combinação que piorasse o `r` ou multiplicasse o jitter por mais de 1.5 face à v1 em
+*qualquer* clip é rejeitada, por melhor que fosse a média. Foram rejeitadas 276 das 324, e
+os guardas ganharam a sua paga: a primeira vencedora por score puro deixava o vale entre
+sílabas a 0.22 contra 0.06 da v1 — a "boca permanentemente entreaberta" que a v1 já
+avisava. A métrica sozinha compra correlação com lentidão.
+
+Números (60 Hz; `lag` positivo = boca atrasada; `fecho` = fracção de vales acertados):
+
+| treino (12 clips) | r | lag | jitter | alcance | fecho |
+|---|---|---|---|---|---|
+| v1 | 0.600 | 11 ms | 0.034 | 0.80 | 0.52 |
+| v2 | 0.593 | 11 ms | 0.035 | 0.82 | 0.52 |
+| v3 | **0.630** | 12 ms | **0.032** | 0.80 | 0.51 |
+
+| holdout (4 clips, nunca afinados) | r | lag | jitter | alcance | fecho |
+|---|---|---|---|---|---|
+| v1 | 0.500 | 11 ms | 0.033 | 0.72 | 0.56 |
+| v2 | 0.468 | 11 ms | 0.034 | 0.75 | 0.56 |
+| v3 | **0.506** | 15 ms | **0.031** | 0.74 | **0.58** |
+
+Ou seja: ganho real mas modesto (+5% de `r` no treino, +1% no holdout), com menos tremor e
+sem pagar em lag — 15 ms continua muito abaixo dos 40 ms em que se começa a ver. A v2 é a
+única que piora o `r` no holdout, o que era de esperar: liberta o tecto sem nada que a
+segure.
+
+Aquele +1% do holdout merece ser lido com cuidado, porque é uma média de quatro clips e um
+deles é patológico: o `happy` forte do actor 01 dá `r` **negativo** nas três cadeias
+(−0.03 na v1, −0.09 na v3) — é o clip em que ele declama de boca sempre aberta, e a boca
+deixa de ter relação com o volume da voz. Nos outros três a v3 ganha de forma consistente
+(0.666→0.697, 0.682→0.705, 0.687→0.717, sempre ~+0.03). Um clip mau não se remove por ser
+mau, mas também não se finge que a média de quatro números diz o que diz a de trinta. O
+outro senão está no lag: nos clips de emoção forte a v3 chega a 22-31 ms contra 8-12 da
+v1 — o hold de 140 ms a fazer o seu trabalho, ainda dentro do orçamento, mas é o primeiro
+sítio onde olhar se ao vivo parecer atrasada.
+
+**A v3 não é o caminho por omissão e não passa a ser sem A/B ao vivo** — 0.630 contra
+0.600 em dois actores americanos a declamar duas frases não é argumento para mexer no que
+está validado na cara de quem usa isto. O guião do A/B está em `tools/README.md`. No modo
+debug (`d`), a v3 mostra `ap` e `oc`: com `ap` alto e a boca fechada, quem está a fechar é
+a oclusão — distingue-se sinal de pose sem adivinhar.
+
+**Auto-range, outra vez: reprovado, e agora com números.** A checkbox `auto range` existe
+(só na v3, desligada) mas a bancada rejeitou-a: viola o guarda do `r` em **11 dos 12 clips
+de treino**, um deles a cair de 0.372 para 0.113. Alarga o alcance para 0.92 e baixa o lag
+para 3 ms — e é exactamente esse o engodo, porque o que ele faz é seguir a envolvente em
+vez da boca. Fica no studio só porque o caso que interessa é o oposto do que estes clips
+têm (fala baixa, cansada, ao fim do dia) e esse só se vê ao vivo.
+
 **Possibilidade futura — lipsync assistido por áudio.** A visão dá a *forma* (visemes) mas
 anda ~100ms atrás do som e falha aberturas pequenas; o volume do microfone (Web Audio,
 `AnalyserNode`) tem latência ~0 e não perde uma sílaba. As ferramentas grandes (VSeeFace,
 Animaze) fundem os dois: áudio para o timing e a energia, visão para a forma da boca. Aqui
 seria um toggle — o microfone já é pedido para gravar, e ficava tudo local como o resto.
-Por fazer: pede afinação ao vivo, que o headless não sente latência.
+É a ronda seguinte, e agora tem onde ser medida antes de ser escrita: a bancada já alinha
+o envelope do áudio com a timeline da boca, que é precisamente o sinal que a fusão usaria.
+Continua a pedir afinação ao vivo — o headless não sente latência.
 
 ### visemes — como toda a boca abre
 
@@ -246,6 +348,7 @@ efeito de uma alteração ao rig sem câmara — serve por http tal como as outr
 | `studio.html` | PFP live + painel de afinação (grava em `localStorage`, por critter) |
 | `_rigtest.html` | folha de contacto do rig (ferramenta de dev) |
 | `_uitest.html` | medição do layout mobile em iframes de telemóvel (ferramenta de dev) |
+| `tools/` | bancada offline da fala: vídeo real → traces → replay → métricas (ver `tools/README.md`). Fora do container |
 
 **Nota**: precisa de ser servido por http(s) (getUserMedia não funciona em file://):
 ```
