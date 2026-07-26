@@ -10,7 +10,7 @@ Saida por clip, em tools/traces/<clip>.json:
 
   {clip, fps, w, h, bsNames[52], lmIdx[19],
    frames: [{t, bs: [52 floats], lm: [[x,y] x19]}],
-   audio: {hz: 100, envDb: [...]}}
+   audio: {hz: 100, envDb: [...], bandas: [[7 floats] x N], bandasHz: [...]}}
 
 Os landmarks vao so nos 19 indices que a cadeia le — o replay recompoe o array de 478
 com (0.5,0.5) no resto, que e exactamente o que a cadeia ignora.
@@ -18,6 +18,12 @@ com (0.5,0.5) no resto, que e exactamente o que a cadeia ignora.
   python3 tools/capture.py                 # todos os clips ainda sem trace
   python3 tools/capture.py --forcar        # recaptura tudo
   python3 tools/capture.py --frames 30 X   # so os primeiros 30 frames de um clip (gate T0)
+  python3 tools/capture.py --so-audio      # so o bloco `audio` dos traces que ja existem
+
+O `--so-audio` existe porque as bandas chegaram depois dos traces: recalcula o audio
+dos clips e reescreve-o nos traces sem tocar nos landmarks — nao precisa do mediapipe
+(que e a unica dependencia pesada aqui) e nao arrisca um tracker de outra versao a
+contaminar frames ja capturados. O `envDb` sai do mesmo codigo de sempre, byte a byte.
 """
 import argparse
 import json
@@ -26,11 +32,7 @@ import subprocess
 import sys
 import urllib.request
 
-import cv2
 import numpy as np
-import mediapipe as mp
-from mediapipe.tasks import python as mp_python
-from mediapipe.tasks.python import vision as mp_vision
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
 CLIPS = os.path.join(AQUI, "clips")
@@ -45,6 +47,13 @@ LM_IDX = [10, 152, 33, 133, 159, 145, 362, 263, 386, 374, 234, 454, 1, 13, 14, 6
 AUDIO_HZ = 100          # 10 ms por amostra do envelope
 AUDIO_SR = 16000
 
+# Bandas de frequencia da forma da boca (referencia: wawa-lipsync). Nao sao formantes
+# nem pretendem ser: sao sete baldes grosseiros de onde a energia esta, e a derivacao
+# no engine usa RACIOS entre eles — o F2 de cada pessoa cai onde cair, o que se mede e
+# se a energia esta em baixo (bico, "ooo") ou em cima (fenda, "eee").
+BANDAS_HZ = [50, 200, 400, 800, 1500, 2500, 4000, 8000]
+BANDA_WIN = 512         # 32 ms de janela (a AnalyserNode do browser usa 1024 @48k = 21 ms)
+
 
 def garante_modelo():
     if os.path.exists(MODELO):
@@ -54,13 +63,17 @@ def garante_modelo():
     urllib.request.urlretrieve(MODELO_URL, MODELO)
 
 
-def envelope(caminho):
-    """log-RMS por 10 ms do audio do clip, mono 16 kHz."""
+def pcm(caminho):
+    """audio do clip em mono 16 kHz, float -1..1."""
     proc = subprocess.run(
         ["ffmpeg", "-nostdin", "-loglevel", "error", "-i", caminho,
          "-vn", "-ac", "1", "-ar", str(AUDIO_SR), "-f", "s16le", "-"],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-    x = np.frombuffer(proc.stdout, dtype="<i2").astype(np.float32) / 32768.0
+    return np.frombuffer(proc.stdout, dtype="<i2").astype(np.float32) / 32768.0
+
+
+def envelope(x):
+    """log-RMS por 10 ms — o mesmo calculo de sempre, agora sobre o PCM ja lido."""
     hop = AUDIO_SR // AUDIO_HZ
     n = len(x) // hop
     if n == 0:
@@ -70,7 +83,46 @@ def envelope(caminho):
     return [round(float(v), 3) for v in 20.0 * np.log10(rms)]
 
 
+def bandas(x):
+    """log-energia (dB) das 7 bandas, a mesma cadencia do envelope.
+
+    Janela de Hann de 32 ms com passo de 10 ms — sobreposicao, portanto, tal como no
+    browser (a AnalyserNode tambem devolve o espectro da sua ultima janela a cada
+    leitura). O que importa para a derivacao sao diferencas entre bandas na MESMA
+    janela, e essas nao dependem do comprimento dela.
+    """
+    hop = AUDIO_SR // AUDIO_HZ
+    n = len(x) // hop
+    if n == 0:
+        return []
+    janela = np.hanning(BANDA_WIN).astype(np.float32)
+    pad = np.pad(x, (0, BANDA_WIN), mode="constant")
+    idx = np.arange(BANDA_WIN)[None, :] + (np.arange(n) * hop)[:, None]
+    quadros = pad[idx] * janela
+    esp = np.abs(np.fft.rfft(quadros, axis=1)) ** 2
+    freqs = np.fft.rfftfreq(BANDA_WIN, 1.0 / AUDIO_SR)
+    out = np.zeros((n, len(BANDAS_HZ) - 1), dtype=np.float64)
+    for b in range(len(BANDAS_HZ) - 1):
+        sel = (freqs >= BANDAS_HZ[b]) & (freqs < BANDAS_HZ[b + 1])
+        # media e nao soma: bandas largas tem mais bins e ficariam altas so por isso
+        out[:, b] = 10.0 * np.log10(esp[:, sel].mean(axis=1) + 1e-12)
+    return [[round(float(v), 2) for v in linha] for linha in out]
+
+
+def bloco_audio(caminho):
+    x = pcm(caminho)
+    return {"hz": AUDIO_HZ, "envDb": envelope(x),
+            "bandasHz": BANDAS_HZ, "bandas": bandas(x)}
+
+
 def captura(caminho, limite=None):
+    # importado aqui e nao no topo: o `--so-audio` so precisa de numpy + ffmpeg, e
+    # exigir-lhe o mediapipe instalado era pedir 400 MB para calcular um espectro
+    import cv2
+    import mediapipe as mp
+    from mediapipe.tasks import python as mp_python
+    from mediapipe.tasks.python import vision as mp_vision
+
     cap = cv2.VideoCapture(caminho)
     if not cap.isOpened():
         raise RuntimeError("nao abriu: " + caminho)
@@ -142,9 +194,12 @@ def main():
     ap.add_argument("clip", nargs="?", help="um clip so (nome sem .mp4)")
     ap.add_argument("--frames", type=int, default=None, help="limite de frames (gate T0)")
     ap.add_argument("--forcar", action="store_true")
+    ap.add_argument("--so-audio", action="store_true",
+                    help="so recalcula o bloco `audio` dos traces que ja existem")
     args = ap.parse_args()
 
-    garante_modelo()
+    if not args.so_audio:
+        garante_modelo()
     os.makedirs(TRACES, exist_ok=True)
 
     alvos = []
@@ -162,6 +217,29 @@ def main():
         print("sem clips — correr tools/fetch-datasets.sh primeiro")
         return 1
 
+    if args.so_audio:
+        n = 0
+        for sub, nome, caminho in alvos:
+            destino = os.path.join(TRACES, nome + ".json")
+            if not os.path.exists(destino):
+                continue
+            with open(destino) as fh:
+                tr = json.load(fh)
+            antigo = tr.get("audio", {}).get("envDb")
+            tr["audio"] = bloco_audio(caminho)
+            # o envelope tem de sair identico ao que ja estava: se mudar, os numeros
+            # todos da bancada mudavam por baixo e ninguem dava por isso
+            if antigo is not None and antigo != tr["audio"]["envDb"]:
+                print("%-24s ENVELOPE MUDOU — abortado" % nome)
+                return 1
+            with open(destino, "w") as fh:
+                json.dump(tr, fh, separators=(",", ":"))
+            print("%-24s env %d  bandas %dx%d" % (nome, len(tr["audio"]["envDb"]),
+                  len(tr["audio"]["bandas"]), len(BANDAS_HZ) - 1))
+            n += 1
+        print("%d trace(s) com audio actualizado" % n)
+        return 0
+
     mau = 0
     for sub, nome, caminho in alvos:
         destino = os.path.join(TRACES, nome + ".json")
@@ -170,7 +248,7 @@ def main():
         tr = captura(caminho, args.frames)
         tr["clip"] = nome
         tr["conjunto"] = sub
-        tr["audio"] = {"hz": AUDIO_HZ, "envDb": envelope(caminho)}
+        tr["audio"] = bloco_audio(caminho)
         s = sanidade(tr)
         esperado = tr["lidos"]
         print("%-24s %3d/%-3d frames  maxJaw %.3f  p10 %.3f  corr %.2f  %s%s" % (
