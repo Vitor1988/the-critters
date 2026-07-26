@@ -28,7 +28,6 @@ button.rec-on{background:#c0261e}
   .description{font-size:12px;margin-top:8px;line-height:1.4}
   .navigation{margin-top:10px}
   button{padding:10px 12px;font-size:12px;margin-right:6px;margin-bottom:6px}
-  #cam{width:104px;left:10px;bottom:10px}
 }
 .panel{pointer-events:auto;position:fixed;right:12px;top:12px;width:230px;max-height:calc(100vh - 24px);overflow-y:auto;background:rgba(255,255,255,.92);border:2px solid #000;padding:10px 12px;font-family:'Source Code Pro',monospace;font-size:12px;z-index:1002;color:#000}
 .panel summary{cursor:pointer;font-weight:900;margin-bottom:6px}
@@ -45,12 +44,13 @@ button.rec-on{background:#c0261e}
 /* Telemóvel: o painel deixa de ser uma coluna à direita (não cabe, transbordava o
    ecrã e tapava o critter) e passa a ser uma gaveta em baixo, fechada de início. */
 @media (max-width:700px){
-  .panel{left:8px;right:8px;top:auto;bottom:8px;width:auto;max-height:min(62vh,430px);font-size:12px;
-         box-shadow:0 -6px 24px rgba(0,0,0,.18)}
-  .panel summary{font-size:13px;padding:2px 0}
+  .panel{left:8px;right:8px;top:auto;bottom:max(8px,env(safe-area-inset-bottom));width:auto;max-height:min(62dvh,430px);font-size:12px;
+         box-shadow:0 -6px 24px rgba(0,0,0,.28)}
+  .panel summary{font-size:14px;padding:8px 0;text-align:center;border:2px solid #000;margin:-2px -4px 6px;background:#000;color:#fff}
+  .panel[open] summary{margin-bottom:8px}
   .p-row select,.p-row input[type=range]{height:30px}
   .p-io button{padding:11px 6px;font-size:12px}
-  #cam{top:10px;right:10px;bottom:auto;width:84px}
+  #cam{top:10px;right:10px;left:auto;bottom:auto;width:84px}
   .favs{max-width:calc(100vw - 24px)}
 }
 </style>
