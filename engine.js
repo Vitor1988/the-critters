@@ -559,29 +559,10 @@ function buildModel(id, opts) {
     addShape(shapes, wobblyArc(mw * 0.3, my - 10, mw * 0.7, mh * 0.75, 0.15, Math.PI * 0.85, 10, 3.5, rng, -0.12),
       { fill: null, stroke: pal.line, closed: false, lw: 3.5, part: 'lip' }, rng, 8);
   } else if (mouthStyle === 'rigged') {
-    /* Boca desenhada para o rig: lábio de cima e de baixo são duas cadeias do mesmo
-       comprimento que partilham os cantos, e o contorno fechado entre elas é o interior
-       da boca. Em repouso as duas cadeias coincidem, portanto lê-se como uma linha.
-       O applyRig reescreve estes pontos a partir dos visemes; o que fica gravado aqui é
-       a bind pose (e o wobble por vértice, para não perder o traço à mão). */
-    /* bind pose = a boca 'chill': o mesmo arco, a mesma largura, a mesma curvatura
-       relaxada. O que muda é a topologia por baixo. */
-    const N = RIG_MOUTH_N;
-    const rx = mw * 0.8, ry = 5, cyM = my - 6;
-    const a0 = Math.PI - 0.1, a1 = 0.1;
-    const wob = [];
-    for (let i = 0; i < N * 2; i++) wob.push([(rng() - .5) * 2.4, (rng() - .5) * 2.2]);
-    const rest = [];
-    for (let i = 0; i < N; i++) {
-      const a = a0 + (a1 - a0) * i / (N - 1);
-      rest.push([Math.cos(a) * rx + wob[i][0], cyM + Math.sin(a) * ry + wob[i][1] * 0.5]);
-    }
-    const pts = rest.map(p => [p[0], p[1]]);
-    for (let i = N - 2; i > 0; i--) pts.push([rest[i][0], rest[i][1]]);
-    addShape(shapes, pts, {
-      fill: pal.line, stroke: pal.line, lw: 3, part: 'rigMouth',
-      vN: N, vRx: rx, vRy: ry, vA0: a0, vA1: a1, vCx: 0, vCy: cyM, vWob: wob
-    }, rng, 8);
+    /* boca neutra desenhada para o rig: o arco da 'chill' com mais pontos e wobble mais
+       contido. Fora dos pesos do sorteio — só à mão, no studio. */
+    addShape(shapes, wobblyArc(0, my - 6, mw * 0.8, 5, 0.1, Math.PI - 0.1, 16, 1.8, rng),
+      { fill: null, stroke: pal.line, closed: false, lw: 3, part: 'lip' }, rng, 8);
   }
 
   if ((mouthStyle === 'smile' || mouthStyle === 'open') && (topStyle === 'horns' || t.wild % 4 === 2)) {
@@ -819,7 +800,6 @@ const rigClamp = (v, a, b) => Math.max(a, Math.min(b, v));
    (2 = elipse; mais alto = fenda de cantos quadrados). Misturam-se linearmente,
    como blendshapes — não há "pose seleccionada", há pesos.
    -------------------------------------------------------------------------- */
-const RIG_MOUTH_N = 15;
 /* `ratio` é altura/largura da abertura, não uma medida absoluta: é o que garante que o
    "O" é redondo em qualquer cara, em vez de depender do espaço que aquela cara tem entre
    o nariz e o queixo. `upShare` reparte a abertura entre o lábio de cima e o de baixo
@@ -879,6 +859,38 @@ function rigVisemeDrive(sig, SENS) {
 /* perfil da abertura ao longo da boca: 0 nos cantos, 1 ao centro */
 function rigProfile(t, p) {
   return Math.pow(Math.max(0, 1 - Math.pow(Math.abs(t), p)), 1 / p);
+}
+
+/* Cada estilo entra no rig como uma *linha de repouso* — a sua boca fechada, tal como é
+   desenhada — mais estes dois ajustes de carácter. `ratio` multiplica a proporção do
+   viseme (o 'o' abre redondo e pequeno, o 'grin' largo e baixo) e `p` o expoente do
+   perfil (mais alto = fenda de cantos mais rectos). A mecânica é a mesma para todas. */
+const RIG_MOUTH_N = 17;
+const RIG_MOUTH_STYLE = {
+  smile:  { ratio: 1.00, p: 1.00 },
+  chill:  { ratio: 0.95, p: 1.00 },
+  mad:    { ratio: 1.00, p: 1.00 },
+  open:   { ratio: 1.20, p: 1.00 },
+  fangs:  { ratio: 1.05, p: 1.00 },
+  tongue: { ratio: 1.00, p: 1.00 },
+  w:      { ratio: 0.95, p: 1.15 },
+  zigzag: { ratio: 0.95, p: 1.20 },
+  o:      { ratio: 1.70, p: 1.00 },
+  grin:   { ratio: 0.85, p: 1.15 },
+  smirk:  { ratio: 1.00, p: 1.00 },
+  rigged: { ratio: 1.00, p: 1.00 }
+};
+
+/* reamostra uma polilinha para N pontos, pelo parâmetro e não por x: o 'w' são dois
+   arcos que se sobrepõem em x, e por x a interpolação ficava ambígua */
+function rigResample(line, N) {
+  const out = [], last = line.length - 1;
+  for (let i = 0; i < N; i++) {
+    const t = last * i / (N - 1);
+    const a = Math.min(last, Math.floor(t)), b = Math.min(last, a + 1), f = t - a;
+    out.push([line[a][0] + (line[b][0] - line[a][0]) * f, line[a][1] + (line[b][1] - line[a][1]) * f]);
+  }
+  return out;
 }
 
 const rigDist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -1059,7 +1071,7 @@ function applyIdle(sig, mouse, W, H, st) {
 function buildRig(model) {
   const pal = model.palette;
   const m = model.mouth;
-  const rig = { eyes: [], brows: [], lip: null, holes: [], kids: [], viseme: null, jawDrop: 0 };
+  const rig = { eyes: [], brows: [], mouth: null, kids: [], jawDrop: 0 };
 
   for (const sh of model.shapes) {
     if (sh.role !== 'eye') continue;
@@ -1104,7 +1116,7 @@ function buildRig(model) {
     if (!sh.noWarp) sh.intensity = 5;
   }
 
-  const parts = { lip: [], hole: [], teeth: [], tongue: [], throat: [], rigMouth: [] };
+  const parts = { lip: [], hole: [], teeth: [], tongue: [], throat: [] };
   for (const sh of model.shapes) {
     if (sh.role !== 'mouth') continue;
     (parts[sh.part] || parts.lip).push(sh);
@@ -1120,20 +1132,15 @@ function buildRig(model) {
   const chinY = model.botY - 7;
   const noseY = model.noseBotY + 3;
 
-  /* boca 'rigged': o budget é o mesmo critério das outras — o espaço real que a cara
-     tem entre o nariz e o queixo, medido uma vez aqui */
-  for (const sh of parts.rigMouth) {
-    /* medido na curva real da bind pose: os cantos em cima, o centro do arco em baixo */
-    const top = sh.vCy + Math.sin(sh.vA1) * sh.vRy;
-    const bot = sh.vCy + sh.vRy;
-    sh.vUp = Math.max(4, top - noseY);
-    sh.vDown = Math.max(6, chinY - bot);
-    /* o levantar dos cantos também tem de caber: há caras em que a boca nasce colada ao
-       nariz, e sem isto o sorriso metia-se por dentro dele */
-    sh.vLiftUp = Math.min(7, Math.max(0, top - noseY));
-    sh.vLiftDown = Math.min(7, Math.max(0, chinY - bot));
-    rig.viseme = sh;
-  }
+  /* --------------------------------------------------------------------------
+     Uma só boca no rig, seja qual for o estilo. A *linha de repouso* vem do desenho
+     — é a boca fechada tal como o critter a tem — e a mecânica por cima é sempre a
+     mesma: cantos ancorados, perfil do viseme, budgets medidos na cara.
+       · bocas de arco (smile, chill, w, zigzag, …) dão a linha directamente
+       · bocas de buraco (open, o, grin) dão o eixo horizontal da elipse, e passam
+         assim a fechar numa linha limpa como as outras
+     -------------------------------------------------------------------------- */
+  let restLine = null, anchor = null, lineW = 3.5;
 
   const lips = [];
   for (const sh of parts.lip) {
@@ -1141,7 +1148,6 @@ function buildRig(model) {
     if (!sh.closed && b.x1 - b.x0 >= 6) lips.push({ sh, cx: (b.x0 + b.x1) / 2 });
     else sh.alphaMul = 0;
   }
-
   if (lips.length) {
     lips.sort((a, b) => a.cx - b.cx);
     const chain = [];
@@ -1151,14 +1157,41 @@ function buildRig(model) {
       for (const p of sp) chain.push([p[0], p[1]]);
       sh.alphaMul = 0;
     }
-    const n = chain.length;
-    const c = rigCentroid(chain);
-    /* w: peso do ponto na abertura (0 nos cantos), usado só para medir os budgets aqui —
-       na deformação o perfil vem do viseme. uu: posição ao longo da cadeia. */
-    const w = [], uu = [];
+    restLine = rigResample(chain, RIG_MOUTH_N);
+    anchor = lips[0].sh;
+    lineW = lips[0].sh.lw;
+  } else if (parts.hole.length) {
+    const sh = parts.hole[0];
+    const b = rigBounds(sh.pts);
+    const cy = (b.y0 + b.y1) / 2, rx = Math.max(2, (b.x1 - b.x0) / 2), cx = (b.x0 + b.x1) / 2;
+    /* o desenho está de boca aberta: a linha de repouso é o eixo da elipse, com um
+       resto do contorno para não ficar uma régua */
+    const line = [];
+    for (let i = 0; i < RIG_MOUTH_N; i++) {
+      const t = -1 + 2 * i / (RIG_MOUTH_N - 1);
+      let near = 0, nd = 1e9;
+      for (let k = 0; k < sh.pts.length; k++) {
+        const d = Math.abs(sh.pts[k][0] - (cx + t * rx));
+        if (d < nd) { nd = d; near = k; }
+      }
+      line.push([cx + t * rx, cy + (sh.pts[near][1] - cy) * 0.12]);
+    }
+    restLine = line;
+    anchor = sh;
+    lineW = sh.lw;
+    for (const h of parts.hole) h.alphaMul = 0;
+  }
+
+  if (restLine) {
+    const n = restLine.length;
+    const c = rigCentroid(restLine);
+    const style = RIG_MOUTH_STYLE[model.mouth.style] || RIG_MOUTH_STYLE.chill;
+    const rngM = mulberry32(hashStr(model.id + ':mouth'));
+    const w = [], uu = [], wob = [];
     for (let i = 0; i < n; i++) {
       w.push(Math.pow(Math.sin(Math.PI * i / (n - 1)), 1.3));
       uu.push(i / (n - 1));
+      wob.push((rngM() - .5) * 2.2);
     }
 
     /* range of motion: quanto pode cada lábio andar antes de sair da cara.
@@ -1169,48 +1202,39 @@ function buildRig(model) {
       /* o lábio de baixo alisa-se em direcção à linha entre os cantos, que nalgumas
          bocas (a 'mad', de cantos em baixo) fica *abaixo* do ponto original — é esse o
          ponto de partida a contar para o budget */
-      const flat = chain[0][1] + (chain[n - 1][1] - chain[0][1]) * uu[i];
-      const lowest = Math.max(chain[i][1], flat);
+      const flat = restLine[0][1] + (restLine[n - 1][1] - restLine[0][1]) * uu[i];
+      const lowest = Math.max(restLine[i][1], flat);
       down = Math.min(down, (chinY - lowest) / wi);
-      up = Math.min(up, (chain[i][1] - noseY) / wi);
-      liftUp = Math.min(liftUp, (chain[i][1] - noseY) / ci);
+      up = Math.min(up, (restLine[i][1] - noseY) / wi);
+      liftUp = Math.min(liftUp, (restLine[i][1] - noseY) / ci);
       liftDown = Math.min(liftDown, (chinY - lowest) / ci);
     }
     down = Math.max(0, down); up = Math.max(0, up);
     const budget = Math.min(down + up, Math.max(10, (chinY - noseY) * 0.85));
     const dn = Math.min(down, budget * 0.75);
 
+    /* contorno fechado: lábio de cima (n) + lábio de baixo pela volta (n-2, sem repetir
+       os cantos). Os offsets são partilhados entre os pontos que coincidem quando a
+       boca está fechada, senão a linha de repouso abria-se com o jitter. */
     const offs = [];
     for (let i = 0; i < n; i++) offs.push([0, 0]);
+    const pts = restLine.map(p => [p[0], p[1]]);
+    const offsAll = offs.slice();
+    for (let i = n - 2; i > 0; i--) { pts.push([restLine[i][0], restLine[i][1]]); offsAll.push(offs[i]); }
     const sh = {
-      pts: chain.map(p => [p[0], p[1]]).concat(chain.map(p => [p[0], p[1]]).reverse()),
-      offs: offs.concat(offs.slice().reverse()),
-      basePts: chain.map(p => [p[0], p[1]]),
-      half: n, u: uu,
-      halfW: Math.max(2, (rigBounds(chain).x1 - rigBounds(chain).x0) / 2),
-      corner0: chain[0][1], corner1: chain[n - 1][1],
-      closed: true, lw: lips[0].sh.lw, alpha: 1, alphaMul: 1, intensity: 5, jit: 0,
-      fill: pal.line, stroke: pal.line, role: 'mouth', part: 'lipRig',
+      pts, offs: offsAll, rest: restLine.map(p => [p[0], p[1]]),
+      half: n, u: uu, wob,
+      halfW: Math.max(2, (rigBounds(restLine).x1 - rigBounds(restLine).x0) / 2),
+      corner0: restLine[0][1], corner1: restLine[n - 1][1],
+      ratioK: style.ratio, pK: style.p,
+      closed: true, lw: lineW, alpha: 1, alphaMul: 1, intensity: 5, jit: 0,
+      fill: pal.line, stroke: pal.line, role: 'mouth', part: 'mouthRig',
       cx: c[0], cy: c[1], sx: 1, sy: 1, ox: 0, oy: 0,
       down: dn, up: Math.min(up, budget - dn),
       liftUp: Math.max(0, liftUp), liftDown: Math.max(0, liftDown)
     };
-    model.shapes.splice(model.shapes.indexOf(lips[0].sh), 0, sh);
-    rig.lip = sh;
-  }
-
-  for (const sh of parts.hole) {
-    const b = rigBounds(sh.pts);
-    const cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2;
-    sh.basePts = sh.pts.map(p => [p[0], p[1]]);
-    sh.baseCx = cx; sh.baseCy = cy;
-    sh.baseRx = Math.max(2, (b.x1 - b.x0) / 2);
-    sh.baseRy = Math.max(2, (b.y1 - b.y0) / 2);
-    sh.downMax = sh.baseRy + Math.max(0, chinY - b.y1);
-    sh.upMax = sh.baseRy + Math.max(0, b.y0 - noseY);
-    sh.liftUp = Math.min(7, Math.max(0, cy - noseY));
-    sh.liftDown = Math.min(7, Math.max(0, chinY - cy));
-    rig.holes.push(sh);
+    model.shapes.splice(model.shapes.indexOf(anchor), 0, sh);
+    rig.mouth = sh;
   }
 
   /* língua e garganta: filhas do lábio de baixo */
@@ -1249,104 +1273,55 @@ function applyRig(model, rig, sig, SENS) {
   const D = rigVisemeDrive(sig, SENS);
   const wx = width * D.rx;
 
-  const L = rig.lip;
-  if (L) {
-    const H = D.amount * D.ratio * 2 * L.halfW * wx * SENS.openHeight;
-    const up = Math.min(H * D.upShare, L.up);
-    const dn = Math.min(H - H * D.upShare, L.down);
-    const lift = smile * (smile > 0 ? L.liftUp : L.liftDown);
-    const openK = L.down > 0 ? rigClamp(dn / L.down, 0, 1) : 0;
-    const n = L.half;
-    for (let i = 0; i < L.pts.length; i++) {
-      const k = i < n ? i : 2 * n - 1 - i;
-      const b = L.basePts[k];
-      const w = rigProfile(-1 + 2 * L.u[k], D.p);
-      L.pts[i][0] = L.cx + (b[0] - L.cx) * wx;
-      if (i < n) {
-        L.pts[i][1] = b[1] - up * w - lift * (1 - w);
-      } else {
+  const M = rig.mouth;
+  if (M) {
+    /* A altura sai da largura pela proporção do viseme (é isso que mantém o "O" redondo
+       em qualquer cara), afinada pelo carácter do estilo, e é comandada pelo maior de
+       dois: o queixo ou o que o próprio viseme exige. Em repouso ambos são zero — a boca
+       fecha na sua linha de origem, seja ela o sorriso, o "w" ou a serra do zigzag. */
+    const H = D.amount * D.ratio * M.ratioK * 2 * M.halfW * wx * SENS.openHeight;
+    const up = Math.min(H * D.upShare, M.up);
+    const dn = Math.min(H - H * D.upShare, M.down);
+    const lift = smile * (smile > 0 ? M.liftUp : M.liftDown);
+    const openK = M.down > 0 ? rigClamp(dn / M.down, 0, 1) : 0;
+    const p = D.p * M.pK;
+    const n = M.half;
+    for (let i = 0; i < n; i++) {
+      const b = M.rest[i];
+      const w = rigProfile(-1 + 2 * M.u[i], p);
+      /* o wobble é multiplicativo na abertura: dá um traço vivo à boca aberta e
+         desaparece com ela, portanto a boca fechada continua a colapsar exacta */
+      const jitter = 1 + M.wob[i] * 0.05;
+      const x = M.cx + (b[0] - M.cx) * wx;
+      const top = b[1] - lift * (1 - w);
+      M.pts[i][0] = x;
+      M.pts[i][1] = top - up * w * jitter;
+      if (i > 0 && i < n - 1) {
         /* o lábio de baixo é a mandíbula, e a mandíbula é lisa: à medida que a boca abre,
            vai deixando de copiar o desenho de cima (os dois lóbulos da 'w', os dentes da
            'zigzag') e assenta na linha entre os cantos */
-        const flat = L.corner0 + (L.corner1 - L.corner0) * L.u[k];
-        const y = b[1] + (flat - b[1]) * openK * 0.8;
-        L.pts[i][1] = y + dn * w - lift * (1 - w);
+        const flat = M.corner0 + (M.corner1 - M.corner0) * M.u[i];
+        const bot = b[1] + (flat - b[1]) * openK * 0.8 - lift * (1 - w);
+        const j = 2 * n - 2 - i;
+        M.pts[j][0] = x;
+        M.pts[j][1] = bot + dn * w * jitter;
       }
     }
-    L.ox = shiftX;
+    M.ox = shiftX;
     rig.jawDrop = dn;
   }
 
-  const V = rig.viseme;
-  if (V) {
-    /* a altura sai da largura pela proporção do viseme — é isso que mantém o "O" redondo
-       em qualquer cara — e é comandada pelo maior de dois: o queixo, ou o que o próprio
-       viseme exige. Com a cara em repouso ambos são zero, portanto a boca fecha mesmo. */
-    const halfW = V.vRx * D.rx * width;
-    const H = D.amount * D.ratio * 2 * halfW * SENS.openHeight;
-    const up = Math.min(H * D.upShare, V.vUp);
-    const dn = Math.min(H - H * D.upShare, V.vDown);
-    const N = V.vN;
-    const lift = smile * (smile > 0 ? V.vLiftUp : V.vLiftDown);
-    for (let i = 0; i < N; i++) {
-      const u = i / (N - 1);
-      const t = -1 + 2 * u;
-      /* superelipse: p=2 dá elipse, mais alto aproxima uma fenda de cantos rectos.
-         prof vale 0 nos cantos, portanto é lá que os dois lábios se encontram. */
-      const prof = rigProfile(t, D.p);
-      /* o wobble da linha é partilhado pelos dois lábios (senão a boca fechada não
-         fecha) e o da abertura é multiplicativo, logo desaparece com ela */
-      const ang = V.vA0 + (V.vA1 - V.vA0) * u;
-      const x = V.vCx + Math.cos(ang) * halfW + shiftX + V.vWob[i][0];
-      const base = V.vCy + Math.sin(ang) * V.vRy - lift * t * t + V.vWob[i][1] * 0.5;
-      V.pts[i][0] = x;
-      V.pts[i][1] = base - up * prof * (1 + V.vWob[i][1] * 0.05);
-      if (i > 0 && i < N - 1) {
-        const j = 2 * N - 2 - i;   /* o mesmo t, na volta de baixo do contorno */
-        V.pts[j][0] = x;
-        V.pts[j][1] = base + dn * prof * (1 + V.vWob[N + i][1] * 0.05);
-      }
-    }
-    V.ox = 0; V.oy = 0; V.sx = 1; V.sy = 1;
-    rig.jawDrop = dn;
-  }
-
-  const H = rig.holes[0] || null;
-  for (const hole of rig.holes) {
-    /* o viseme já traz a forma — o "O" é redondo pela proporção — portanto não há aqui
-       nenhum blend circular do pucker: arredondaria duas vezes */
-    const RX = hole.baseRx * wx;
-    const shut = hole.baseRy * 0.12;
-    const H = D.amount * D.ratio * 2 * RX * SENS.openHeight;
-    const RYu = rigClamp(H * D.upShare, shut, hole.upMax);
-    const RYd = rigClamp(H - H * D.upShare, shut, hole.downMax);
-    const lift = smile * (smile > 0 ? hole.liftUp : hole.liftDown);
-    for (let i = 0; i < hole.pts.length; i++) {
-      const b = hole.basePts[i];
-      const nx = (b[0] - hole.baseCx) / hole.baseRx;
-      const ny = (b[1] - hole.baseCy) / hole.baseRy;
-      const corner = Math.abs(nx) * (1 - Math.min(1, Math.abs(ny)));
-      hole.pts[i][0] = hole.baseCx + nx * RX + shiftX;
-      hole.pts[i][1] = hole.baseCy + ny * (ny < 0 ? RYu : RYd) - lift * corner;
-    }
-    hole.sx = 1; hole.sy = 1; hole.ox = 0; hole.oy = 0;
-    if (hole === H) rig.jawDrop = RYd - hole.baseRy * 0.12;
-  }
-
+  /* língua e garganta seguem a mandíbula: descem com o lábio de baixo, sem passar o
+     queixo, e a garganta cresce com a abertura (só se vê quando a boca está aberta) */
   for (const kid of rig.kids) {
     const sh = kid.sh;
-    if (kid.throat && H) {
-      const s = rigClamp((rig.jawDrop + H.baseRy * 0.12) / H.baseRy, 0.05, 3);
-      for (let i = 0; i < sh.pts.length; i++) {
-        const b = sh.basePts[i];
-        sh.pts[i][0] = H.baseCx + (b[0] - H.baseCx) * wx;
-        sh.pts[i][1] = H.baseCy + (b[1] - H.baseCy) * s;
-      }
-      sh.ox = shiftX; sh.oy = 0; sh.sx = 1; sh.sy = 1;
-    } else {
-      sh.ox = shiftX;
-      sh.oy = Math.min(rig.jawDrop * 0.85, kid.dropMax);
-      sh.sx = wx;
+    sh.ox = shiftX;
+    sh.oy = Math.min(rig.jawDrop * 0.85, kid.dropMax);
+    sh.sx = wx;
+    if (kid.throat) {
+      const grow = M ? rigClamp(rig.jawDrop / Math.max(6, M.down), 0, 1) : 0;
+      sh.sy = 0.25 + grow * 0.9;
+      sh.alphaMul = grow > 0.05 ? 1 : 0;
     }
   }
 }
@@ -1447,6 +1422,46 @@ function toggleFav(id) {
   if (i >= 0) l.splice(i, 1); else l.unshift(id);
   try { localStorage.setItem(FAVS_KEY, JSON.stringify(l.slice(0, FAVS_MAX))); } catch (e) {}
   return i < 0;
+}
+
+/* ---------- sensibilidades ----------
+   As sensibilidades são da *cara e da câmara de quem está a usar*, não do bicho: guardá-las
+   por critter obrigava a reafinar tudo de cada vez que se muda de avatar. Ficam numa base
+   global, e um avatar pode ter as suas (override) quando faz sentido para aquele desenho. */
+const SENS_KEY = 'critter-sens';
+
+function loadGlobalSens() {
+  try { return Object.assign({}, SENS_DEFAULTS, JSON.parse(localStorage.getItem(SENS_KEY)) || {}); }
+  catch (e) { return Object.assign({}, SENS_DEFAULTS); }
+}
+function saveGlobalSens(sens) {
+  try { localStorage.setItem(SENS_KEY, JSON.stringify(sens)); } catch (e) {}
+}
+/* as do avatar, se existirem, ganham à base global */
+function resolveSens(id) {
+  const cfg = loadCritterCfg(id);
+  return Object.assign(loadGlobalSens(), cfg.sens || {});
+}
+
+/* ---------- exportar / importar tudo ---------- */
+function exportAll() {
+  const cfgs = {};
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.indexOf('critter-cfg:') === 0) cfgs[k.slice(12)] = JSON.parse(localStorage.getItem(k));
+    }
+  } catch (e) {}
+  return { v: 1, favs: loadFavs(), sens: loadGlobalSens(), critters: cfgs };
+}
+function importAll(data) {
+  if (!data || data.v !== 1) throw new Error('ficheiro não é um backup de critters');
+  try {
+    if (Array.isArray(data.favs)) localStorage.setItem(FAVS_KEY, JSON.stringify(data.favs.slice(0, FAVS_MAX)));
+    if (data.sens) saveGlobalSens(Object.assign({}, SENS_DEFAULTS, data.sens));
+    for (const id in (data.critters || {})) localStorage.setItem('critter-cfg:' + id, JSON.stringify(data.critters[id]));
+  } catch (e) { throw new Error('não foi possível gravar (localStorage cheio?)'); }
+  return Object.keys(data.critters || {}).length;
 }
 
 function loadCritterCfg(id) {

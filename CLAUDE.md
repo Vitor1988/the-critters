@@ -33,6 +33,11 @@ step: os ficheiros são o artefacto.
   versão antiga tratava os dentes como buraco da boca.
 - **A abertura de qualquer boca vem dos visemes** (`rigVisemeDrive`) — não há caminho
   alternativo de abrir/fechar.
+- **Há uma só boca no rig**, para os 11 estilos: cada um entra como linha de repouso (a
+  sua boca fechada) + dois ajustes em `RIG_MOUTH_STYLE`. Estilo novo = mais uma linha
+  nessa tabela, não mais um caminho de código.
+- **As sensibilidades são globais** (`critter-sens`), com override opcional por avatar em
+  `cfg.sens` — são da cara de quem usa, não do bicho.
 - **A boca não sai da cara por construção**, não por um limite fixo: os budgets de abertura
   são medidos na bind pose, no `buildRig`, a partir do espaço real entre nariz e queixo.
 - **A câmara exige contexto seguro** — `https`, `localhost` ou `file://`. Por http num IP

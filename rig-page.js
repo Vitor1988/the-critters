@@ -38,7 +38,8 @@ function startRigPage(opts) {
     api.model = model;
     api.rig = buildRig(model);
     api.pal = model.palette;
-    api.SENS = Object.assign({}, SENS_DEFAULTS, cfg.sens);
+    api.SENS = resolveSens(id);
+    api.sensLocal = !!cfg.sens;   /* este avatar tem sensibilidades próprias? */
     if (cfg.bg) api.pal.bg = cfg.bg;
     document.body.style.background = api.pal.bg;
     window.location.hash = id;

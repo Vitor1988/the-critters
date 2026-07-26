@@ -39,11 +39,22 @@ Versão "live" do critter: usa MediaPipe Face Landmarker (478 pontos, 100% local
 
 Em modo rig os traits incompatíveis são filtrados automaticamente (sem olhos closed/dead/wink).
 
-### rig da boca
+### rig da boca — uma só, para todos os estilos
 
 Todas as peças da boca são marcadas na engine (`part: lip | hole | teeth | tongue | throat`)
 no momento em que são desenhadas — o rig nunca as adivinha pela cor, que colide entre si
 em algumas paletas.
+
+No modo rig **não há uma boca por estilo**: há uma boca, e cada estilo entra nela como uma
+*linha de repouso* — a sua boca fechada, tal como o critter a desenha. As de arco (`smile`,
+`chill`, `w`, `zigzag`, `smirk`, …) dão a linha directamente; as de buraco (`open`, `o`,
+`grin`) dão o eixo horizontal da elipse e passam a fechar numa linha limpa como as outras.
+Reamostrada para 17 pontos pelo parâmetro (não por x: o `w` são dois arcos que se sobrepõem
+em x). Cada estilo traz ainda dois ajustes de carácter em `RIG_MOUTH_STYLE` — `ratio`
+(o `o` abre redondo e pequeno, o `grin` largo e baixo) e `p` (expoente do perfil).
+
+Resultado: o `mad` continua a ser uma carranca fechada e o `zigzag` uma serra, mas todos
+abrem com a mesma mecânica — cantos ancorados, visemes, budgets medidos na cara.
 
 - **cantos ancorados** — o perfil da abertura é 0 nos cantos (superelipse do viseme; o
   `sin(πu)^1.3` sobrevive só para medir os budgets). A mandíbula nunca arrasta os cantos,
@@ -208,6 +219,13 @@ Para usar como webcam em calls: OBS com Window Capture → Virtual Camera, ou pa
 
 - **favoritos** — botão `♡ favorito` nas três páginas; os IDs ficam em `localStorage`
   (`critter-favs`, até 60) e aparecem como chips clicáveis por baixo dos botões
+- **afinação** — as sensibilidades são da *cara e da câmara de quem usa*, não do bicho:
+  ficam numa base global (`critter-sens`) aplicada a todos os critters. O checkbox
+  **`afinação só deste avatar`** grava-as no cfg do critter, que ganha à global — útil
+  quando um desenho específico precisa de outra coisa. A paleta, a boca e o fundo
+  continuam sempre por critter
+- **exportar / importar** — botões no studio: um JSON com favoritos, afinação global e
+  todos os cfgs de critter. O `localStorage` não viaja entre browsers nem para o telemóvel
 - **gravar vídeo** (`rigged`/`studio`) — `canvas.captureStream(30)` + a faixa de áudio do
   microfone num só `MediaStream`, gravados por `MediaRecorder` para `.webm` (VP9/Opus).
   Grava o **avatar**, não a câmara. A permissão do microfone é pedida só ao carregar em
