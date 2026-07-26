@@ -43,20 +43,18 @@ button.rec-on{background:#c0261e}
 .p-io button{flex:1;padding:8px 6px;margin:0;font-size:11px}
 /* Telemóvel: o painel deixa de ser uma coluna à direita (não cabe, transbordava o
    ecrã e tapava o critter) e passa a ser uma gaveta em baixo, fechada de início. */
-/* Telemóvel: gaveta no rodapé. O `bottom` do CSS é relativo ao viewport de layout,
-   que inclui a faixa tapada pela barra do browser — foi lá que o painel se escondeu
-   antes. Quem sabe onde acaba a área visível é a Visual Viewport API, e é ela que
-   ajusta o `--gaveta` lá em baixo no JS. */
+/* Telemóvel: a gaveta é posicionada por JS (ver `posicionarGaveta`), pela coordenada
+   real da base da área visível. O `bottom` do CSS não serve: é relativo ao viewport de
+   layout, que inclui a faixa tapada pela barra do browser. A câmara sai de cena — é só
+   uma pré-visualização e era ela que andava a estorvar o cabeçalho. */
 @media (max-width:700px), (pointer:coarse) and (max-width:1024px){
-  .panel{position:fixed;left:8px;right:8px;top:auto;width:auto;font-size:12px;
-         bottom:calc(8px + var(--gaveta, 0px));
-         max-height:calc(var(--gaveta-max, 56vh));
+  .panel{position:fixed;left:8px;right:8px;bottom:auto;width:auto;font-size:12px;
          box-shadow:0 -8px 28px rgba(0,0,0,.35)}
   .panel summary{font-size:14px;padding:10px 0;text-align:center;border:2px solid #000;
                  margin:-2px -4px 6px;background:#000;color:#fff}
   .p-row select,.p-row input[type=range]{height:32px}
   .p-io button{padding:11px 6px;font-size:12px}
-  #cam{top:10px;left:auto;right:10px;bottom:auto;width:72px;opacity:.6}
+  #cam{display:none}
   .favs{max-width:calc(100vw - 24px)}
 }
 </style>
@@ -111,26 +109,33 @@ const SLIDERS = [
 ];
 
 const painel = document.querySelector('.panel');
-if (window.matchMedia && matchMedia('(max-width:700px), (pointer:coarse) and (max-width:1024px)').matches) {
-  painel.removeAttribute('open');
-}
+const emGaveta = () => window.matchMedia &&
+  matchMedia('(max-width:700px), (pointer:coarse) and (max-width:1024px)').matches;
+if (emGaveta()) painel.removeAttribute('open');
 
-/* Ancorar a gaveta à área visível: no telemóvel a barra do browser come o fundo do
-   viewport de layout, e um `bottom:8px` fica por baixo dela. A Visual Viewport sabe
-   quanto é que está tapado — e muda quando a barra aparece/desaparece ou o teclado sobe. */
-(function ancorarGaveta() {
+/* Ancorar a gaveta ao fundo do que está *mesmo* visível. Tentei com `bottom` e com
+   offsets da Visual Viewport e em ambos o painel acabou escondido por baixo da barra do
+   browser — o CSS não sabe onde ela acaba. Aqui calcula-se a coordenada da base visível
+   e põe-se o painel logo acima dela. Se isto falhar, o painel fica no topo: visível. */
+function posicionarGaveta() {
+  if (!emGaveta()) { painel.style.top = painel.style.maxHeight = ''; return; }
   const vv = window.visualViewport;
-  if (!vv) return;                       /* sem a API fica o fallback em vh */
-  const ajusta = () => {
-    const tapado = Math.max(0, window.innerHeight - (vv.height + vv.offsetTop));
-    document.documentElement.style.setProperty('--gaveta', tapado + 'px');
-    document.documentElement.style.setProperty('--gaveta-max', Math.round(vv.height * 0.62) + 'px');
-  };
-  ajusta();
-  vv.addEventListener('resize', ajusta);
-  vv.addEventListener('scroll', ajusta);
-  window.addEventListener('orientationchange', () => setTimeout(ajusta, 300));
-})();
+  const base = vv ? vv.offsetTop + vv.height : window.innerHeight;
+  painel.style.maxHeight = Math.round(base * 0.62) + 'px';
+  const h = painel.getBoundingClientRect().height;
+  painel.style.top = Math.max(4, base - h - 8) + 'px';
+}
+posicionarGaveta();
+/* a altura muda ao abrir/fechar e quando o conteúdo muda; o evento `toggle` sozinho
+   chegava a correr antes de o layout assentar e o painel abria para fora do ecrã */
+if (window.ResizeObserver) new ResizeObserver(posicionarGaveta).observe(painel);
+painel.addEventListener('toggle', () => setTimeout(posicionarGaveta, 0));
+window.addEventListener('resize', posicionarGaveta);
+window.addEventListener('orientationchange', () => setTimeout(posicionarGaveta, 300));
+if (window.visualViewport) {
+  visualViewport.addEventListener('resize', posicionarGaveta);
+  visualViewport.addEventListener('scroll', posicionarGaveta);
+}
 
 const palSel = document.getElementById('cfg-palette');
 const mouthSel = document.getElementById('cfg-mouth');
