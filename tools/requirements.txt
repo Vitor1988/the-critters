@@ -1,0 +1,9 @@
+# Bancada de captura. A versao do mediapipe e a MESMA do bundle que as paginas
+# carregam da CDN (@mediapipe/tasks-vision@0.10.14) — traces capturados com outra
+# versao nao representam producao.
+mediapipe==0.10.14
+# Armadilha do WSL: o mediapipe puxa opencv-contrib-python (com GUI), que exige
+# libGL.so.1 e rebenta a importar. A variante headless resolve e e equivalente
+# para o que a bancada faz (ler frames).
+opencv-contrib-python-headless
+numpy<2

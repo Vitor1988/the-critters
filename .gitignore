@@ -1,0 +1,6 @@
+tools/.venv/
+tools/clips/
+tools/traces/
+tools/out/
+__pycache__/
+*.pyc
