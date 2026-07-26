@@ -1005,8 +1005,127 @@ function rigOneEuro(st, x, dt, cfg) {
   return st.x;
 }
 
+/* --------------------------------------------------------------------------
+   mistura com o microfone — EXPERIMENTAL, atrás do slider `audioMix` (omissão 0).
+   Com o slider a 0 nada disto corre: nem se pede o microfone, nem se toca no alvo.
+
+   Porquê misturar de todo: a câmara e o microfone falham em coisas diferentes. O
+   tracker vê a *forma* da boca (bilabiais, o "eee", o bico do "u") mas a 30 fps
+   perde metade do ritmo silábico e chega atrasado ao ataque; o microfone tem o
+   ritmo ao milissegundo mas não sabe distinguir um "mmm" de um "ahh", nem sequer
+   se a boca está aberta. Daí a divisão de trabalho do VTube Studio/VSeeFace: o
+   áudio manda na ABERTURA, o vídeo continua a mandar na FORMA e na OCLUSÃO — a
+   mistura entra só no alvo da abertura, antes do filtro final, e a bilabial do
+   vídeo continua a fechar a boca por cima do que o áudio pedir.
+
+   O nível sai daqui já normalizado (0..1), não em dB, porque o que a boca precisa
+   é de uma fracção de curso. Entre o dB cru e essa fracção há três coisas:
+
+   · **chão de ruído automático.** Percentil baixo dos últimos ~4 s, não o mínimo:
+     o mínimo agarra-se a uma amostra e nunca mais larga. Desce a pique (um som
+     acabou de parar: o chão é já) e sobe travado, senão uma frase longa arrastava
+     o chão consigo e comia as sílabas fracas do fim.
+   · **gate acima do chão.** Ventoinha, frigorífico e o próprio ruído do
+     pré-amplificador vivem no chão; a margem é o que os deixa de fora. Abaixo do
+     gate o nível é zero exacto — a boca fecha, não fica a vibrar a 0.03.
+   · **tecto adaptativo, com o span preso.** Sem ele o mesmo código dá uma boca
+     saturada num micro com ganho alto e uma boca tímida num micro fraco (nos
+     próprios clips da bancada os picos variam 26 dB entre actores). O `spanMin`
+     é o que impede o "do 8 para o 80": em silêncio o tecto não se aproxima do
+     gate mais do que isto, portanto o ruído nunca chega a parecer voz.
+   -------------------------------------------------------------------------- */
+const RIG_AUDIO = {
+  /* Como estes números foram escolhidos: `tools/replay.js --audio` injecta o envelope
+     dos 16 clips de vídeo real como se fosse o microfone (com `--ruido` a pôr-lhes um
+     chão de sala por baixo, que o estúdio do RAVDESS não tem). O critério NÃO foi o
+     `r` — correlacionar a boca com o envelope que a alimenta é circular e mede zero.
+     Foi o par que o projecto de facto teme: o vale entre sílabas e o tremor. */
+  janelaMs: 4000,     /* janela do chão de ruído */
+  pctChao: 10,        /* e o percentil dela que conta como chão */
+  /* a 10 dB/s um degrau de ruído (o ar condicionado a arrancar) deixa de mexer a boca
+     ao fim de ~5 s em vez de ~9 s, e não custa nada na fala corrida: em 40 s de fala
+     contínua o chão assenta no mesmo sítio com 3 ou com 25 dB/s — quem manda no regime
+     permanente é o percentil, isto só governa o transitório */
+  subidaDbS: 10,      /* o chão sobe no máximo isto por segundo (a descida é imediata) */
+  margemDb: 8,        /* gate = chão + isto */
+  spanMin: 12,        /* dB entre o gate e a boca cheia: nunca menos... */
+  spanMax: 30,        /* ...nem mais do que isto */
+  tetoQuedaDbS: 3,    /* o tecto desce isto por segundo quando ninguém fala */
+  /* 1.0 = sem curva, e é medido: com gamma abaixo de 1 a boca engorda no meio do
+     intervalo e o vale entre sílabas sobe, que é exactamente o modo de falha que a v1
+     documenta. A compensação da fala baixa já vem do tecto adaptativo, não daqui. */
+  gamma: 1.0,
+  /* Fronteiras do veto da oclusão (ver `rigAudioVeto`): abaixo de `vetoDead` o
+     microfone não dá por nada, em `vetoCheio` já não tem autoridade nenhuma.
+     Medido nos 16 clips, e não adivinhado: a falar, a oclusão das duas cadeias fica
+     em 0.05 de mediana e nunca passa de 0.20 (v1) / 0.17 (v3). O bloco da v1 avisa
+     que o `mouthClose` co-dispara na fala normal, e é verdade — mas na cara real
+     co-dispara muito abaixo do que a pose sintética `vogalPress` sugere. Daí haver
+     folga para pôr a zona morta em 0.30 sem tocar num único frame de fala, e fechar
+     o veto já em 0.62, que é o que faz uma boca selada ficar selada. */
+  vetoDead: 0.30,
+  vetoCheio: 0.62,
+  atkMs: 20,          /* ataque rápido: a sílaba começa no primeiro milissegundo */
+  /* 90 ms: a 110 ms o vale entre sílabas fica em 0.66 do pico, a 90 ms em 0.60 (o vídeo
+     sozinho dá 0.68 na v1 e 0.74 na v3), e o tremor sobe de 0.0272 para 0.0290 — ambos
+     bem abaixo dos 0.0355 do vídeo. Trocou-se um bocado de tremor por vale mais fundo,
+     que é o lado certo para o defeito que este projecto tem. */
+  relMs: 90,
+  dbMin: -100
+};
+
+/* Veto da oclusão sobre o microfone: o áudio pede curso, o vídeo é que o autoriza.
+
+   Sem isto a mistura tinha um buraco que a bancada apanhou — a berrar com a mistura
+   no máximo, uma bilabial abria a boca a 0.43 (o vídeo sozinho fecha-a a 0.05) e uma
+   selada a 0.47. É o modo de falha de qualquer lipsync só de áudio: o "m" de "mãe"
+   tem tanta energia como o "ã", e só a cara sabe que os lábios estão colados.
+
+   O veto é sobre a MISTURA, não sobre o alvo: com os lábios selados o peso do
+   microfone vai a zero e o que fica é exactamente a boca de vídeo — não uma média
+   das duas. E tem zona morta, senão a fala normal (onde o `press` co-dispara) perdia
+   metade do microfone sem haver oclusão nenhuma. */
+function rigAudioVeto(mix, ocl) {
+  const K = RIG_AUDIO;
+  return mix * (1 - rigClamp((ocl - K.vetoDead) / (K.vetoCheio - K.vetoDead), 0, 1));
+}
+
+/* nível de voz 0..1 a partir do dB instantâneo do microfone. O estado (anel, histograma,
+   chão, tecto) vive no `sig.au`, criado à primeira utilização — sem microfone fica nulo.
+   O histograma de 1 dB é o que torna o percentil O(1) por frame em vez de uma ordenação. */
+function rigAudioLevel(sig, au, dt) {
+  const K = RIG_AUDIO;
+  const db = rigClamp(au.db, K.dbMin, 0);
+  const bin = Math.round(db) - K.dbMin;
+  let a = sig.au;
+  if (!a) {
+    /* a janela é em tempo, e o anel em amostras: dimensiona-se pela cadência real */
+    const n = rigClamp(Math.round(K.janelaMs / Math.max(8, dt)), 60, 600);
+    a = sig.au = { anel: new Array(n).fill(bin), i: 0, bins: new Array(101).fill(0),
+      chao: db, teto: db + K.spanMin, gate: db + K.margemDb, lvl: 0 };
+    a.bins[bin] = n;
+  }
+  a.bins[a.anel[a.i]]--;
+  a.bins[bin]++;
+  a.anel[a.i] = bin;
+  a.i = (a.i + 1) % a.anel.length;
+
+  let acc = 0, b = 0;
+  const alvoN = a.anel.length * K.pctChao / 100;
+  for (; b < 100; b++) { acc += a.bins[b]; if (acc >= alvoN) break; }
+  const pChao = b + K.dbMin;
+  a.chao = pChao < a.chao ? pChao : Math.min(pChao, a.chao + K.subidaDbS * dt / 1000);
+  a.teto = Math.max(db, a.teto - K.tetoQuedaDbS * dt / 1000);
+
+  a.gate = a.chao + K.margemDb;
+  const span = rigClamp(a.teto - a.gate, K.spanMin, K.spanMax);
+  const alvo = Math.pow(rigClamp((db - a.gate) / span, 0, 1), K.gamma);
+  a.lvl += (alvo - a.lvl) * rigEmaA(dt, alvo > a.lvl ? K.atkMs : K.relMs);
+  return a.lvl;
+}
+
 /* escreve sig.mouth, sig.press e sig.smileW — o resto do bloco é partilhado com a v1 */
-function rigSpeechV3(bs, sig, calib, SENS, dt, pucker, smile, mouthR) {
+function rigSpeechV3(bs, sig, calib, SENS, dt, pucker, smile, mouthR, auMix, auAlvo) {
   const K = RIG_V3;
   let v = sig.v3;
   if (!v) v = sig.v3 = { jf: { x: null, dx: 0 }, cf: { x: null, dx: 0 }, oc: 0, ap: 0,
@@ -1041,7 +1160,11 @@ function rigSpeechV3(bs, sig, calib, SENS, dt, pucker, smile, mouthR) {
   v.oc += (oc - v.oc) * rigEmaA(dt, oc > v.oc ? K.ocAtkMs : K.ocRelMs);
 
   v.ap = ap;   /* guardado só para o debug: com `ap` alto e a boca fechada, quem fecha é a oclusão */
-  let alvo = rigClamp(Math.pow(ap, K.gamma) * SENS.mouthGain *
+  /* a mistura do microfone entra aqui e só aqui: na abertura crua, ANTES da oclusão e
+     do pucker, e já com o veto da oclusão aplicado ao peso (`rigAudioVeto`) */
+  let drv = Math.pow(ap, K.gamma);
+  if (auMix > 0) drv += (auAlvo - drv) * rigAudioVeto(auMix, v.oc);
+  let alvo = rigClamp(drv * SENS.mouthGain *
     (1 - K.ocGate * v.oc) * (1 - 0.35 * pucker), 0, 1);
 
   /* hold anti-flicker, que cede à oclusão */
@@ -1070,7 +1193,9 @@ function createSig() {
     gx: 0, gy: 0, hx: 0, hy: 0, joy: 0, sad: 0, surprise: 0, anger: 0, wide: 0,
     pucker: 0, stretch: 0, jawX: 0, funnel: 0, press: 0, smileW: 0,
     /* estado dos filtros da fala v3, criado a primeira utilizacao — na v1/v2 fica nulo */
-    v3: null
+    v3: null,
+    /* estado do chao de ruido do microfone, idem — sem `audioMix` fica nulo */
+    au: null
   };
 }
 
@@ -1080,8 +1205,10 @@ function createCalib() {
 
 /* devolve true quando a calibração já terminou (i.e. o sig está a ser escrito).
    `dtMs` é o tempo desde o frame anterior; só a fala v3 o usa, e quem não o passa
-   fica com 16.7 (um frame a 60 Hz), que é o que a v1 sempre assumiu implicitamente. */
-function processLandmarks(lm, bs, sig, cal, SENS, dtMs) {
+   fica com 16.7 (um frame a 60 Hz), que é o que a v1 sempre assumiu implicitamente.
+   `au` é o microfone — `{db, conf}`, dB instantâneo e confiança (0 = sem mic) — e só
+   é lido com o slider `audioMix` fora do zero; quem não o passa fica em vídeo puro. */
+function processLandmarks(lm, bs, sig, cal, SENS, dtMs, au) {
   const dt = dtMs || 16.7;
   const earL = rigDist(lm[159], lm[145]) / rigDist(lm[33], lm[133]);
   const earR = rigDist(lm[386], lm[374]) / rigDist(lm[362], lm[263]);
@@ -1147,8 +1274,15 @@ function processLandmarks(lm, bs, sig, cal, SENS, dtMs) {
     const smile = (bs.mouthSmileLeft + bs.mouthSmileRight) / 2;
     const v3 = SENS.speechV3 > 0;
     sig.funnel += (rigClamp(bs.mouthFunnel, 0, 1) - sig.funnel) * 0.4;
+    /* microfone: mesma mistura para as três cadeias, calculada uma vez. Com o slider
+       a 0 (omissão) ou sem microfone vivo, `auMix` fica 0 e o caminho é o de sempre. */
+    let auMix = 0, auAlvo = 0;
+    if (SENS.audioMix > 0 && au && au.conf > 0) {
+      auAlvo = rigAudioLevel(sig, au, dt);
+      auMix = rigClamp(SENS.audioMix * au.conf, 0, 1);
+    }
     if (v3) {
-      rigSpeechV3(bs, sig, calib, SENS, dt, pucker, smile, mouthR);
+      rigSpeechV3(bs, sig, calib, SENS, dt, pucker, smile, mouthR, auMix, auAlvo);
     } else {
     /* fala v2 (toggle no studio, para A/B ao vivo): o press cala o *queixo* antes da
        fusão e deixa de travar depois. Com press crónico, a trava pós-fusão da v1 põe um
@@ -1158,7 +1292,12 @@ function processLandmarks(lm, bs, sig, cal, SENS, dtMs) {
     const openBS0 = (bs.jawOpen - (calib.jaw || 0) - 0.02) / RIG_JAW_SPAN;
     const openBS = v2 ? openBS0 * Math.max(0, 1 - 1.1 * press) : openBS0;
     const openLM = (mouthR - calib.mouth - 0.004) / RIG_LIP_SPAN;
-    const jaw = rigClamp(Math.pow(rigClamp(Math.max(openBS, openLM), 0, 1), 0.85) * SENS.mouthGain, 0, 1);
+    /* a mistura do microfone entra antes da trava do press e do pucker, pelas mesmas
+       razões da v3, e com o mesmo veto — aqui a oclusão é o `press`, que é o único
+       sinal de lábios colados que esta cadeia tem */
+    let drv = Math.pow(rigClamp(Math.max(openBS, openLM), 0, 1), 0.85);
+    if (auMix > 0) drv += (auAlvo - drv) * rigAudioVeto(auMix, press);
+    const jaw = rigClamp(drv * SENS.mouthGain, 0, 1);
     const openT = jaw * (v2 ? 1 : 1 - 0.6 * press) * (1 - 0.35 * pucker);
     /* fecha quase tão depressa como abre: entre sílabas a boca tem mesmo de voltar, senão
        a fala corrida lê-se como uma boca permanentemente entreaberta */
@@ -1624,7 +1763,7 @@ function drawModel(ctx, model, sig, SENS, frozen) {
 /* visemeE e closeSpeed nasceram de experiências revertidas (ver "cicatrizes" no README):
    em vez de constantes minhas, são doses do utilizador — a 0/1 são exactamente a cadeia
    validada, e o que os sliders adicionam foi ele que o pôs lá. */
-const SENS_DEFAULTS = { mouthGain: 1, mouthWidth: 1, openHeight: 1, puckerFx: 1, visemeE: 0, closeSpeed: 1, gazeGain: 1, blinkGain: 1, headGain: 1, headMove: 1, sphere: 1, lean: 1, smooth: 1, speechV2: 0, speechV3: 0, speechAuto: 0 };
+const SENS_DEFAULTS = { mouthGain: 1, mouthWidth: 1, openHeight: 1, puckerFx: 1, visemeE: 0, closeSpeed: 1, gazeGain: 1, blinkGain: 1, headGain: 1, headMove: 1, sphere: 1, lean: 1, smooth: 1, speechV2: 0, speechV3: 0, speechAuto: 0, audioMix: 0 };
 /* ---------- favoritos (localStorage, partilhados pelas três páginas) ---------- */
 const FAVS_KEY = 'critter-favs';
 const FAVS_MAX = 60;
