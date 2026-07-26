@@ -188,7 +188,18 @@ function startRigPage(opts) {
      captureStream dá um MediaStream do que está a ser desenhado; junta-se-lhe a faixa
      de áudio do microfone (permissão pedida só aqui, não no arranque) e o MediaRecorder
      escreve um webm. Grava o avatar, não a câmara. */
-  const REC_TYPES = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'];
+  /* MP4/H.264+AAC primeiro: é o que se pode mandar a alguém sem pensar — iPhone, WhatsApp,
+     QuickTime, tudo. O webm (VP9) é aberto e melhor comprimido, mas o Safari e o WhatsApp
+     não o engolem, portanto fica só como recurso para browsers sem MP4 (Firefox).
+     O perfil avc1.42E01E é o baseline, o mais compatível que há. */
+  const REC_TYPES = [
+    'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+    'video/mp4;codecs=avc1',
+    'video/mp4',
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp8,opus',
+    'video/webm'
+  ];
   let recorder = null, recChunks = [], recAudio = null, recStart = 0, recTimer = 0, statusBeforeRec = '';
 
   function recSupported() {
