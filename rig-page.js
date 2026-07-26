@@ -140,9 +140,15 @@ function startRigPage(opts) {
     }
   }
 
-  let detTick = 0, lastTs = -1;
+  let detTick = 0, lastTs = -1, lastNow = -1;
   function frame(now) {
     requestAnimationFrame(frame);
+
+    /* tempo real desde a última passagem pela cadeia — a fala v3 filtra em ms e não
+       em frames, e sem isto um telemóvel a 30 fps teria metade da suavização. Preso
+       entre 8 e 50 ms: um separador de browser em segundo plano devolve saltos de
+       segundos, e isso faria a boca dar um estalo ao voltar. */
+    const dt = lastNow < 0 ? 16.7 : Math.min(50, Math.max(8, now - lastNow));
 
     detTick++;
     if (tracking && landmarker && video.readyState >= 2 && (!IS_MOBILE || detTick % 2 === 0)) {
@@ -157,7 +163,8 @@ function startRigPage(opts) {
             for (const c of res.faceBlendshapes[0].categories) bs[c.categoryName] = c.score;
           }
           const was = !!cal.ready;
-          processLandmarks(res.faceLandmarks[0], bs, sig, cal, api.SENS);
+          processLandmarks(res.faceLandmarks[0], bs, sig, cal, api.SENS, dt);
+          lastNow = now;
           if (!was && cal.ready) setStatus('tracking — express yourself');
         }
       } catch (e) { /* um frame falhado do tracker não pode parar o desenho */ }
@@ -174,7 +181,12 @@ function startRigPage(opts) {
         ' · roll ' + sig.roll.toFixed(2) + ' · gaze ' + sig.gx.toFixed(2) + ',' + sig.gy.toFixed(2) +
         ' · joy ' + sig.joy.toFixed(2) + ' · wide ' + sig.wide.toFixed(2) +
         ' · pk ' + sig.pucker.toFixed(2) + ' · fn ' + sig.funnel.toFixed(2) + ' · st ' + sig.stretch.toFixed(2) + ' · jx ' + sig.jawX.toFixed(2) + ' · pr ' + sig.press.toFixed(2) +
-        (api.SENS.speechV2 > 0 ? ' · V2' : ' · V1');
+        (api.SENS.speechV3 > 0
+          /* na v3, `ap` e `oc` distinguem sinal de pose: se a boca não abre com ap
+             alto, quem a está a fechar é a oclusão — e vê-se qual dos dois é */
+          ? ' · V3' + (api.SENS.speechAuto > 0 ? '+auto' : '') +
+            (sig.v3 ? ' · ap ' + sig.v3.ap.toFixed(2) + ' · oc ' + sig.v3.oc.toFixed(2) : '')
+          : api.SENS.speechV2 > 0 ? ' · V2' : ' · V1');
     }
 
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);

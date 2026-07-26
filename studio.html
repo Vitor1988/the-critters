@@ -100,7 +100,8 @@ button.rec-on{background:#c0261e}
     <details class="sub" open>
       <summary>sensibilidade</summary>
       <div class="p-row p-check"><label><input type="checkbox" id="cfg-sens-local"> afinação só deste avatar</label></div>
-      <div class="p-row p-check"><label><input type="checkbox" id="cfg-fala-v2"> fala v2 (experimental)</label></div>
+      <div class="p-row"><span>fala</span><select id="cfg-fala"></select></div>
+      <div class="p-row p-check"><label><input type="checkbox" id="cfg-fala-auto"> auto range (só na v3)</label></div>
       <div id="sliders"></div>
     </details>
   </details>
@@ -142,21 +143,41 @@ const palSel = document.getElementById('cfg-palette');
 const mouthSel = document.getElementById('cfg-mouth');
 const bgInput = document.getElementById('cfg-bg');
 const localChk = document.getElementById('cfg-sens-local');
-const falaV2Chk = document.getElementById('cfg-fala-v2');
+const falaSel = document.getElementById('cfg-fala');
+const falaAutoChk = document.getElementById('cfg-fala-auto');
 
-/* comuta ao vivo entre a cadeia validada (v1) e a experimental (gate no queixo, sem
-   trava do press) — grava como qualquer sensibilidade, global ou deste avatar */
-falaV2Chk.addEventListener('change', () => {
-  const v = falaV2Chk.checked ? 1 : 0;
-  page.SENS.speechV2 = v;
+/* As três cadeias da boca, para A/B ao vivo. As chaves gravadas não mudam — o select
+   escreve o mesmo par {speechV2, speechV3} que já existia, e uma configuração antiga
+   com speechV2:1 reaparece aqui como v2 sem conversão nenhuma.
+     v1  a cadeia validada na cara dele; é o que continua por omissão
+     v2  liberta o teto do press (ver o comentário no engine)
+     v3  cadeia nova: mouthClose com a semântica do ARKit, oclusão M/B/P própria e
+         filtros em ms — afinada em vídeo real (tools/), por confirmar ao vivo */
+const FALA = [['v1', 0, 0], ['v2', 1, 0], ['v3 (experimental)', 0, 1]];
+FALA.forEach(([nome], i) => falaSel.add(new Option(nome, i)));
+
+/* grava como qualquer sensibilidade, global ou só deste avatar */
+function gravaSens(o) {
+  Object.assign(page.SENS, o);
   if (localChk.checked) {
     const c = loadCritterCfg(page.id);
-    c.sens = Object.assign({}, c.sens, { speechV2: v });
+    c.sens = Object.assign({}, c.sens, o);
     saveCritterCfg(page.id, c);
   } else {
-    saveGlobalSens(Object.assign(loadGlobalSens(), { speechV2: v }));
+    saveGlobalSens(Object.assign(loadGlobalSens(), o));
   }
+}
+
+falaSel.addEventListener('change', () => {
+  const [, v2, v3] = FALA[+falaSel.value];
+  gravaSens({ speechV2: v2, speechV3: v3 });
+  falaAutoChk.disabled = !v3;
 });
+
+/* auto range: normaliza pelo curso que esta cara usa de facto. Na bancada piora os
+   números (actores que já usam a boca toda não têm nada a ganhar) — está aqui porque
+   o caso que interessa é o oposto, fala baixa, e esse só se vê ao vivo. */
+falaAutoChk.addEventListener('change', () => gravaSens({ speechAuto: falaAutoChk.checked ? 1 : 0 }));
 
 PALETTES.forEach((p, i) => palSel.add(new Option(p.name, i)));
 MOUTH_STYLES.forEach((m, i) => mouthSel.add(new Option(m, i)));
@@ -198,7 +219,11 @@ function syncPanel(p) {
   mouthSel.value = cfg.traits && cfg.traits.mouth !== undefined ? cfg.traits.mouth : t.mouth;
   bgInput.value = p.pal.bg;
   localChk.checked = !!p.sensLocal;
-  falaV2Chk.checked = !!p.SENS.speechV2;
+  /* a v3 manda sobre a v2 se ambas aparecerem gravadas (não deve acontecer, mas uma
+     config à mão pode tê-lo) */
+  falaSel.value = p.SENS.speechV3 > 0 ? 2 : p.SENS.speechV2 > 0 ? 1 : 0;
+  falaAutoChk.checked = !!p.SENS.speechAuto;
+  falaAutoChk.disabled = !(p.SENS.speechV3 > 0);
   for (const [key] of SLIDERS) {
     document.getElementById('s-' + key).value = p.SENS[key];
     document.getElementById('v-' + key).textContent = p.SENS[key].toFixed(2);
