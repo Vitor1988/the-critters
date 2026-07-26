@@ -17,7 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const { loadEngine } = require('./lib/shim');
 const { mkLm, mkBs, fresh } = require('./lib/fixtures');
-const { POSE, corre: corre0, vale, assercoesV3 } = require('./lib/guardas');
+const { POSE, corre: corre0, vale, assercoesV3, assercoesAudio } = require('./lib/guardas');
 
 const GOLDENS = path.join(__dirname, 'goldens.json');
 const eng = loadEngine();
@@ -194,13 +194,19 @@ if (difs.length) {
 console.log('goldens OK — v1/v2 e sliders identicos bit a bit');
 if (novas.length) console.log('  chaves SENS novas (permitido): ' + novas.join(', '));
 
-const v3 = verificaV3();
-if (v3.saltado) { console.log('  v3 ainda nao existe no engine — assercoes saltadas'); process.exit(0); }
-console.log('assercoes da v3:');
-let falhou = 0;
-for (const l of v3.linhas) {
-  console.log('  ' + (l.ok ? 'ok  ' : 'FALHA ') + l.nome + '  ' + l.detalhe);
-  if (!l.ok) falhou++;
+let falhou = 0, total = 0;
+function bateria(titulo, r, semNada) {
+  if (r.saltado) { console.log('  ' + semNada); return; }
+  console.log(titulo);
+  for (const l of r.linhas) {
+    console.log('  ' + (l.ok ? 'ok  ' : 'FALHA ') + l.nome + '  ' + l.detalhe);
+    if (!l.ok) falhou++;
+  }
+  total += r.linhas.length;
+  console.log('  ' + r.linhas.filter(l => l.ok).length + '/' + r.linhas.length + ' ok');
 }
-if (falhou) { console.error(falhou + ' assercao(oes) da v3 falharam'); process.exit(1); }
-console.log('  ' + v3.linhas.length + '/' + v3.linhas.length + ' ok');
+
+bateria('assercoes da v3:', verificaV3(), 'v3 ainda nao existe no engine — assercoes saltadas');
+bateria('assercoes do audio:', assercoesAudio(eng), 'audioMix ainda nao existe no engine — assercoes saltadas');
+
+if (falhou) { console.error(falhou + ' de ' + total + ' assercao(oes) falharam'); process.exit(1); }

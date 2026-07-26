@@ -14,7 +14,8 @@ const ENGINE = path.join(__dirname, '..', '..', 'engine.js');
 /* os simbolos que a bancada consome; qualquer um em falta rebenta aqui e nao la a frente */
 const EPILOGO = ';({ createSig, createCalib, processLandmarks, rigVisemeWeights,' +
   ' rigVisemeDrive, rigClamp, SENS_DEFAULTS, RIG_JAW_SPAN, RIG_LIP_SPAN,' +
-  ' RIG_V3: typeof RIG_V3 === "undefined" ? null : RIG_V3 })';
+  ' RIG_V3: typeof RIG_V3 === "undefined" ? null : RIG_V3,' +
+  ' RIG_AUDIO: typeof RIG_AUDIO === "undefined" ? null : RIG_AUDIO })';
 
 function loadEngine() {
   const src = fs.readFileSync(ENGINE, 'utf8');

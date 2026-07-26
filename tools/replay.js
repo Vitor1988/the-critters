@@ -16,8 +16,25 @@
       do queixo/abertura/fecho (o repouso que ele de facto tem) e medianas para a
       pose da cabeca. `--pct` varia o percentil, para o teste de sensibilidade.
 
+   3. O AUDIO E INJECTADO COMO SE FOSSE O MICROFONE. O trace traz o envelope do proprio
+      clip (`audio.envDb`, 100 Hz), e com `--audio <mix>` ele entra no
+      `processLandmarks` pelo mesmo parametro que ao vivo traz o microfone, alinhado
+      por timestamp. Duas ressalvas que mudam a leitura dos numeros:
+
+      · **os clips do RAVDESS sao de estudio**: o silencio deles e silencio DIGITAL
+        (-120 dB, zeros exactos), coisa que nenhum microfone da. Sem um chao de ruido
+        realista por baixo, o gate automatico nunca era exercitado. Dai o `--ruido
+        <db>`, que soma potencia de ruido ao envelope: e o mesmo discurso gravado numa
+        sala a serio. O valor tipico de um portatil anda pelos -55 dB.
+      · **CIRCULARIDADE**: a metrica `r` correlaciona a boca com este mesmo envelope.
+        Alimentar a boca com ele infla o `r` por construcao — um `r` alto aqui nao
+        prova nada sobre o hibrido. O que a bancada pode provar sao as propriedades
+        de seguranca (a oclusao continua a ganhar, o silencio fecha, o ruido nao abre,
+        o jitter nao explode, a amplitude nao inflaciona). O ritmo e so ao vivo.
+
    Uso:
-     node tools/replay.js <clip> [--modo v1|v2|v3] [--hz 60|30] [--pct 10] [--json]
+     node tools/replay.js <clip> [--modo v1|v2|v3] [--hz 60|30] [--pct 10]
+                                 [--audio <0..1>] [--ruido <db>] [--json]
 */
 const fs = require('fs');
 const path = require('path');
@@ -117,11 +134,27 @@ function referencia(tr, i, calib) {
   return Math.max(0, Math.min(1, Math.max(a, c)));
 }
 
+/* Envelope do clip com um chao de ruido por baixo, em dB. Soma-se POTENCIA, nao dB:
+   o envelope e 20·log10(rms), portanto 10·log10(10^(a/10) + 10^(n/10)) e a soma certa
+   de dois sinais descorrelacionados. O tremor de +-1.5 dB e o que um chao de sala tem
+   de facto, e sem ele o histograma do chao caia todo num unico bin — mas vem de um
+   PRNG com semente fixa, porque o replay tem de ser determinstico. */
+function comRuido(envDb, ruidoDb) {
+  if (!(ruidoDb > -200)) return envDb;
+  let s = 12345;
+  const rnd = () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff; };
+  return envDb.map(v => {
+    const n = ruidoDb + (rnd() - 0.5) * 3;
+    return 10 * Math.log10(Math.pow(10, v / 10) + Math.pow(10, n / 10));
+  });
+}
+
 /* corre o trace pela cadeia; devolve a timeline que as metricas consomem */
 function replay(tr, opts) {
   const o = opts || {};
   const hz = o.hz || 60;
-  const SENS = Object.assign({}, eng.SENS_DEFAULTS, MODOS[o.modo || 'v1'] || {}, o.sens || {});
+  const SENS = Object.assign({}, eng.SENS_DEFAULTS, MODOS[o.modo || 'v1'] || {},
+    o.audio > 0 ? { audioMix: o.audio } : {}, o.sens || {});
   const cal = { ready: fazCalib(tr, SENS, o.pct), frames: 50, acc: {} };
   const sig = eng.createSig();
 
@@ -136,46 +169,65 @@ function replay(tr, opts) {
   const dt = passoTick * cadaN;
   const fim = tr.frames.length ? tr.frames[tr.frames.length - 1].t : 0;
 
+  /* microfone simulado: o mesmo objecto reutilizado, como ao vivo (o rig-page tambem
+     nao aloca um por frame). `null` quando nao ha mistura — e o caminho de video puro. */
+  const env = o.audio > 0 ? comRuido(tr.audio.envDb, o.ruido) : null;
+  const auHz = tr.audio ? tr.audio.hz : 100;
+  const au = env ? { db: env[0], conf: 1 } : null;
+  const poeAu = T => {
+    if (!env) return;
+    const i = Math.round(T * auHz / 1000);
+    au.db = env[Math.max(0, Math.min(env.length - 1, i))];
+  };
+
   /* aquecimento: o primeiro frame repetido 0.5 s para os EMA assentarem no repouso.
      Nao entra na timeline — de outro modo a rampa inicial contaminava todas as metricas,
      e do mesmo modo em todas as cadeias, mas com pesos diferentes. */
   if (tr.frames.length) {
     poe(tr.frames[0]);
-    for (let i = 0; i < 30; i++) eng.processLandmarks(lm, tr.bsObj[0], sig, cal, SENS, dt);
+    poeAu(0);
+    for (let i = 0; i < 30; i++) eng.processLandmarks(lm, tr.bsObj[0], sig, cal, SENS, dt, au);
   }
 
-  const out = { t: [], mouth: [], press: [], ref: [], wE: [], wA: [], wO: [], wU: [], wI: [] };
+  const out = { t: [], mouth: [], press: [], ref: [], au: [], wE: [], wA: [], wO: [], wU: [], wI: [] };
   let iFrame = 0, tick = 0;
   for (let T = 0; T <= fim; T += passoTick, tick++) {
     while (iFrame + 1 < tr.frames.length && tr.frames[iFrame + 1].t <= T) iFrame++;
     if (tick % cadaN !== 0) continue;
     poe(tr.frames[iFrame]);
-    eng.processLandmarks(lm, tr.bsObj[iFrame], sig, cal, SENS, dt);
+    poeAu(T);
+    eng.processLandmarks(lm, tr.bsObj[iFrame], sig, cal, SENS, dt, au);
     const w = eng.rigVisemeWeights(sig, SENS);
     out.t.push(T); out.mouth.push(sig.mouth); out.press.push(sig.press);
     out.ref.push(referencia(tr, iFrame, cal.ready));
+    out.au.push(sig.au ? sig.au.lvl : 0);
     out.wE.push(w.E); out.wA.push(w.A); out.wO.push(w.O); out.wU.push(w.U); out.wI.push(w.I);
   }
   out.hz = hz; out.modo = o.modo || 'v1'; out.clip = tr.clip;
+  out.audio = o.audio || 0; out.ruido = env ? o.ruido : null;
   return out;
 }
 
 /* `eng` sai daqui para o grid-search poder mexer no RIG_V3 desta MESMA instancia do
    engine — carregar uma segunda daria outro objecto e as afinacoes nao teriam efeito */
-module.exports = { carrega, replay, fazCalib, MODOS, eng };
+module.exports = { carrega, replay, fazCalib, comRuido, MODOS, eng };
 
 /* ---------- CLI ---------- */
 if (require.main === module) {
   const args = process.argv.slice(2);
   const val = (f, d) => { const i = args.indexOf(f); return i >= 0 ? args[i + 1] : d; };
-  const nome = args.find(a => !a.startsWith('--') && args[args.indexOf(a) - 1] !== '--modo' &&
-    args[args.indexOf(a) - 1] !== '--hz' && args[args.indexOf(a) - 1] !== '--pct');
-  if (!nome) { console.error('uso: node tools/replay.js <clip> [--modo v1|v2|v3] [--hz 60|30] [--pct 10] [--json]'); process.exit(2); }
+  const FLAGS = ['--modo', '--hz', '--pct', '--audio', '--ruido'];
+  const nome = args.find(a => !a.startsWith('--') && FLAGS.indexOf(args[args.indexOf(a) - 1]) < 0);
+  if (!nome) { console.error('uso: node tools/replay.js <clip> [--modo v1|v2|v3] [--hz 60|30] [--pct 10] [--audio 0..1] [--ruido dB] [--json]'); process.exit(2); }
   const tr = carrega(nome);
-  const tl = replay(tr, { modo: val('--modo', 'v1'), hz: +val('--hz', 60), pct: +val('--pct', 10) });
+  const tl = replay(tr, { modo: val('--modo', 'v1'), hz: +val('--hz', 60), pct: +val('--pct', 10),
+    audio: +val('--audio', 0), ruido: +val('--ruido', -55) });
   if (args.includes('--json')) { console.log(JSON.stringify(tl)); process.exit(0); }
-  console.log(nome + '  modo ' + tl.modo + '  ' + tl.hz + 'Hz  ' + tl.t.length + ' amostras');
+  console.log(nome + '  modo ' + tl.modo + '  ' + tl.hz + 'Hz  ' + tl.t.length + ' amostras' +
+    (tl.audio ? '  audio ' + tl.audio + ' (ruido ' + tl.ruido + ' dB)' : ''));
   console.log('  mouth  min ' + Math.min.apply(null, tl.mouth).toFixed(3) +
     '  p95 ' + pct(tl.mouth, 95).toFixed(3) + '  max ' + Math.max.apply(null, tl.mouth).toFixed(3));
   console.log('  press  max ' + Math.max.apply(null, tl.press).toFixed(3));
+  if (tl.audio) console.log('  nivel  p50 ' + pct(tl.au, 50).toFixed(3) +
+    '  p95 ' + pct(tl.au, 95).toFixed(3) + '  max ' + Math.max.apply(null, tl.au).toFixed(3));
 }
