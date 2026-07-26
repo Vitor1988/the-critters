@@ -827,7 +827,9 @@ function rigVisemeWeights(sig, SENS) {
   const open = rigClamp(sig.mouth, 0, 1);
   const pk = dead(rigClamp(sig.pucker, 0, 1), 0.12);
   const fn = dead(rigClamp(sig.funnel, 0, 1), 0.12);
-  const st = dead(rigClamp(sig.mouthW * 2, 0, 1), 0.1);
+  /* o stretch dedicado (que ouve o smile) manda no E/I; o mouthW*2 fica como fallback
+     para o modo rato e para o ramo sem blendshapes, que não escrevem sig.stretch */
+  const st = dead(rigClamp(Math.max(sig.mouthW * 2, sig.stretch), 0, 1), 0.1);
   const w = {
     U: pk * 1.4 * fx,               /* é aqui que o slider 'pucker fx' entra nos visemes */
     O: fn * 2.2 * fx,               /* generoso, para o "O" sair mesmo redondo */
@@ -993,16 +995,22 @@ function processLandmarks(lm, bs, sig, cal, SENS) {
        qualquer fala ocupar o curso todo, do 8 para o 80.
        Dois sinais independentes, fica o maior: o blendshape do queixo e a abertura entre
        os lábios interiores medida nos landmarks. Um apanha o que o outro falha. */
-    const openBS = (bs.jawOpen - (calib.jaw || 0) - 0.02) / RIG_JAW_SPAN;
-    const openLM = (mouthR - calib.mouth - 0.004) / RIG_LIP_SPAN;
-    const jaw = rigClamp(Math.pow(rigClamp(Math.max(openBS, openLM), 0, 1), 0.85) * SENS.mouthGain, 0, 1);
     const press = rigClamp(bs.mouthClose + (bs.mouthPressLeft + bs.mouthPressRight) / 2, 0, 1);
     const pucker = rigClamp(bs.mouthPucker, 0, 1);
+    /* O press cala o queixo *antes* da fusão: o jawOpen dispara com o queixo mesmo de
+       lábios selados, e com o desconto depois do max (como era) um queixo caído de boca
+       fechada abria o avatar ~40%. Silenciado o queixo, a distância real entre os lábios
+       interiores (openLM) fica a mandar — e essa diz corretamente "fechada". */
+    const openBS = (bs.jawOpen - (calib.jaw || 0) - 0.02) / RIG_JAW_SPAN * Math.max(0, 1 - press * 1.25);
+    const openLM = (mouthR - calib.mouth - 0.004) / RIG_LIP_SPAN;
+    const jaw = rigClamp(Math.pow(rigClamp(Math.max(openBS, openLM), 0, 1), 0.85) * SENS.mouthGain, 0, 1);
     sig.funnel += (rigClamp(bs.mouthFunnel, 0, 1) - sig.funnel) * 0.4;
-    const openT = jaw * (1 - 0.6 * press) * (1 - 0.35 * pucker);
-    /* fecha quase tão depressa como abre: entre sílabas a boca tem mesmo de voltar, senão
-       a fala corrida lê-se como uma boca permanentemente entreaberta */
-    sig.mouth += (openT - sig.mouth) * rigClamp((openT > sig.mouth ? 0.6 : 0.45) * SENS.smooth, 0.05, 1);
+    const openT = jaw * (1 - 0.35 * pucker);
+    /* fecha quase tão depressa como abre — e quando o alvo está *quase fechado*, fecha de
+       vez (snap-to-close): as oclusões da fala corrida duram 50–80ms e a suavização normal
+       engolia-as, deixando a boca permanentemente entreaberta. Só o fecho é que acelera. */
+    const aFecho = openT < 0.06 ? 0.85 : 0.45;
+    sig.mouth += (openT - sig.mouth) * rigClamp((openT > sig.mouth ? 0.6 : aFecho) * SENS.smooth, 0.05, 1);
     /* oclusão M/B/P: além de travar a abertura (openT acima), os lábios pressionados são
        uma *pose* — ver o bloco press no applyRig. Ataque rápido: uma bilabial dura ~100ms */
     sig.press += (press - sig.press) * (press > sig.press ? 0.6 : 0.4);
@@ -1021,7 +1029,11 @@ function processLandmarks(lm, bs, sig, cal, SENS) {
     sig.wide += (rigClamp(wide * 1.5, 0, 1) - sig.wide) * 0.3;
     const stretch = rigClamp((bs.mouthStretchLeft + bs.mouthStretchRight) / 2, 0, 1);
     sig.pucker += (pucker - sig.pucker) * 0.4;
-    sig.stretch += (stretch - sig.stretch) * 0.4;
+    /* O "eee" falado estica os cantos como um sorriso: o mouthStretch sozinho é fraco nas
+       vogais reais — quem dispara é o mouthSmile. Para o viseme E vai o maior dos dois.
+       Só o viseme: a largura (mouthW) fica no stretch puro, senão um sorriso parado
+       esticava a boca duas vezes (via largura e via expr). */
+    sig.stretch += (Math.max(stretch, smile * 0.75) - sig.stretch) * 0.4;
     sig.mouthW += (rigClamp((stretch - pucker) * 0.8, -0.5, 0.5) - sig.mouthW) * 0.3;
     sig.jawX += (rigClamp((bs.mouthRight - bs.mouthLeft) + (bs.jawRight - bs.jawLeft) * 0.6, -1, 1) - sig.jawX) * 0.35;
     sig.blinkL += (rigClamp(1 - bs.eyeBlinkRight * 1.6 * SENS.blinkGain, 0.02, 1) - sig.blinkL) * 0.5;

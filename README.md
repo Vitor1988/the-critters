@@ -144,9 +144,15 @@ nunca usam o 0–1 e o queixo tem activação basal. É o que está aqui:
 - **dois sinais independentes, fica o maior** — o blendshape `jawOpen` e a abertura entre
   os lábios interiores medida nos landmarks (13/14 sobre a altura da cara). Um apanha o
   que o outro falha
+- **o press cala o queixo antes da fusão** — o `jawOpen` dispara com o queixo mesmo de
+  lábios selados; com o desconto aplicado *depois* da fusão (como era), um queixo caído
+  de boca fechada abria o avatar ~40%. Silenciado o queixo, a distância real entre os
+  lábios — que diz corretamente "fechada" — fica a mandar
 - **curva** de expoente 0.85, um empurrão na zona baixa sem distorcer o resto
-- **fecha quase tão depressa como abre** (0.6 / 0.45) — senão a fala corrida lê-se como uma
-  boca permanentemente entreaberta
+- **fecha quase tão depressa como abre, e "quase fechado" fecha de vez** — snap-to-close:
+  alvo abaixo de 0.06 → alfa de fecho 0.85. As oclusões da fala corrida duram 50–80ms e
+  a suavização normal engolia-as. Na fala simulada a 4 síl/s, o vale entre sílabas passou
+  de ~0.06 para ~0.001 com o pico intacto — é o que tira o ar de boca sempre entreaberta
 
 Amplitude de `sig.mouth` numa fala simulada a 4 sílabas/s:
 
@@ -159,6 +165,13 @@ Amplitude de `sig.mouth` numa fala simulada a 4 sílabas/s:
 | 0.80 (exagerada) | 0.52 | 0.65 | **0.60** |
 
 Repare-se na coluna do auto-range: 0.45 dá *mais* que 0.80. Não era monótono.
+
+**Possibilidade futura — lipsync assistido por áudio.** A visão dá a *forma* (visemes) mas
+anda ~100ms atrás do som e falha aberturas pequenas; o volume do microfone (Web Audio,
+`AnalyserNode`) tem latência ~0 e não perde uma sílaba. As ferramentas grandes (VSeeFace,
+Animaze) fundem os dois: áudio para o timing e a energia, visão para a forma da boca. Aqui
+seria um toggle — o microfone já é pedido para gravar, e ficava tudo local como o resto.
+Por fazer: pede afinação ao vivo, que o headless não sente latência.
 
 ### visemes — como toda a boca abre
 
@@ -197,6 +210,10 @@ trait. Nasce já com a topologia certa:
     e o queixo pouco aberto; sem isto nunca chegava a ser redondo. `E` e `I` têm `own: 0`
     de propósito — distinguem-se pela largura, e um sorriso de boca fechada dá stretch a
     rodos, que com abertura própria abria a boca do avatar
+  - o sinal do E é `max(mouthStretch, mouthSmile·0.75)`: o stretch sozinho é fraco nas
+    vogais reais — num "eee" falado quem dispara é o smile. Só para o viseme: a largura
+    (`mouthW`) usa o stretch puro, senão um sorriso parado esticava a boca duas vezes
+    (via largura e via `expr`)
   - a abertura final é `max(jaw, own)`, portanto **boca fechada é boca fechada**
 - **zona morta** nos sinais de lábio: o tracker nunca dá zero com a cara em repouso, e sem
   ela o resíduo de pucker/stretch mantinha a boca entreaberta
