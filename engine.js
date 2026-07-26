@@ -825,12 +825,24 @@ function rigVisemeWeights(sig, SENS) {
   const fx = SENS && SENS.puckerFx !== undefined ? SENS.puckerFx : 1;
   const dead = (v, d) => rigClamp((v - d) / (1 - d), 0, 1);
   const open = rigClamp(sig.mouth, 0, 1);
-  const pk = dead(rigClamp(sig.pucker, 0, 1), 0.12);
-  const fn = dead(rigClamp(sig.funnel, 0, 1), 0.12);
+  let pk = dead(rigClamp(sig.pucker, 0, 1), 0.12);
+  let fn = dead(rigClamp(sig.funnel, 0, 1), 0.12);
   /* o slider `viseme E` dosa o quanto o smile alimenta o E — a 0 (omissão) esta linha
      é exactamente a validada (só mouthW*2) */
   const eDose = SENS && SENS.visemeE !== undefined ? SENS.visemeE : 0;
-  const st = dead(rigClamp(Math.max(sig.mouthW * 2, (sig.smileW || 0) * eDose), 0, 1), 0.1);
+  let st = dead(rigClamp(Math.max(sig.mouthW * 2, (sig.smileW || 0) * eDose), 0, 1), 0.1);
+  /* visemes por áudio (slider `audioVisemes`, omissão 0): os dois canais do microfone
+     entram AQUI, nas entradas do solver, e não nas poses nem na abertura. O `max` é o
+     que faz o vídeo continuar a mandar quando ele já viu a forma — o áudio só
+     acrescenta quando a cara não deu sinal. Sem dose ou sem microfone, nem se lê. */
+  const avDose = SENS && SENS.audioVisemes !== undefined ? SENS.audioVisemes : 0;
+  if (avDose > 0 && sig.au) {
+    const K = RIG_VISAUDIO;
+    const r = avDose * (sig.au.round || 0), s = avDose * (sig.au.spread || 0);
+    pk = Math.max(pk, r * K.pesoU);
+    fn = Math.max(fn, r * K.pesoO);
+    st = Math.max(st, s);
+  }
   const w = {
     U: pk * 1.4 * fx,               /* é aqui que o slider 'pucker fx' entra nos visemes */
     O: fn * 2.2 * fx,               /* generoso, para o "O" sair mesmo redondo */
@@ -1101,8 +1113,10 @@ function rigAudioLevel(sig, au, dt) {
   if (!a) {
     /* a janela é em tempo, e o anel em amostras: dimensiona-se pela cadência real */
     const n = rigClamp(Math.round(K.janelaMs / Math.max(8, dt)), 60, 600);
+    /* `round`/`spread` são os canais de forma (ver `rigAudioShape`): vivem aqui
+       porque são estado do microfone, e sem microfone não há nenhum */
     a = sig.au = { anel: new Array(n).fill(bin), i: 0, bins: new Array(101).fill(0),
-      chao: db, teto: db + K.spanMin, gate: db + K.margemDb, lvl: 0 };
+      chao: db, teto: db + K.spanMin, gate: db + K.margemDb, lvl: 0, round: 0, spread: 0 };
     a.bins[bin] = n;
   }
   a.bins[a.anel[a.i]]--;
@@ -1122,6 +1136,105 @@ function rigAudioLevel(sig, au, dt) {
   const alvo = Math.pow(rigClamp((db - a.gate) / span, 0, 1), K.gamma);
   a.lvl += (alvo - a.lvl) * rigEmaA(dt, alvo > a.lvl ? K.atkMs : K.relMs);
   return a.lvl;
+}
+
+/* --------------------------------------------------------------------------
+   visemes por áudio — EXPERIMENTAL, atrás do slider `audioVisemes` (omissão 0),
+   e independente do `audioMix`: são doses separadas porque são apostas separadas.
+   O `audioMix` deixa o microfone mandar na ABERTURA; isto deixa-o mandar na FORMA
+   (o "ooo" redondo contra o "eee" de fenda), que era o outro lado do trabalho.
+
+   Como se lê uma forma num espectro, sem fingir fonética: sete bandas grosseiras
+   (50-200, 200-400, ... 4000-8000 Hz) e um só eixo — o BRILHO, quanta energia está
+   em cima face a baixo. Um "eee"/"iii" tem o F2 lá em cima e é brilhante; um
+   "ooo"/"uuu" tem tudo em baixo e é escuro; o "aaa" fica no meio, que é o que se
+   quer (a abertura já o desenha). Duas medidas independentes votam nesse eixo:
+
+   · **tilt**, a diferença em dB entre as bandas de 1.5-4 kHz e as de 200-800 Hz;
+   · **centroide** espectral, em oitavas.
+
+   Nos 16 clips da bancada correlacionam-se só a r=0.39 — não são a mesma medida, e
+   é por isso que entram as duas. O peso de 10 dB por oitava não é gosto: é a razão
+   entre os desvios-padrão delas na fala real (9.58 dB / 0.951 oitavas = 10.1).
+
+   O que NÃO se faz aqui, e é o essencial: comparar com limiares absolutos de Hz. Os
+   formantes mudam com a pessoa, com o microfone e com a distância — um limiar fixo
+   servia uma voz e falhava a seguinte. O que se compara é com a MÉDIA DESTA VOZ: um
+   seguidor de mediana lento guarda o brilho habitual de quem está a falar, e os
+   canais medem o desvio em dB face a ele. Quem tem voz grave e microfone abafado tem
+   a baseline baixa, e o "eee" dele continua a destacar-se dela.
+   -------------------------------------------------------------------------- */
+const RIG_VISAUDIO = {
+  /* limiares medidos na fala real (os 16 clips seguidos, ~59 s, com a baseline já
+     assente): o desvio do brilho tem p5 −8.0 dB, mediana ~0, p85 +11.9 e p95 +19.9
+     — a cauda clara é o dobro da escura, porque um "sss" sobe 20 dB e não há nada
+     que desça outro tanto. Daí as rampas serem assimétricas: escolhidas para os dois
+     canais acenderem a mesma fracção do tempo (11% e 13% dos frames com voz), com
+     mais de metade dos frames a não pedir forma nenhuma. */
+  rDead: 4, rCheio: 10,     /* O/U: abaixo de −4 dB começa, a −10 dB está cheio */
+  sDead: 7, sCheio: 18,     /* E/I: a cauda clara é mais longa, o limiar acompanha-a */
+  kCent: 10,                /* dB por oitava — a razão dos desvios-padrão medidos */
+  /* a baseline anda devagar de propósito: uma vogal sustentada de 2 s só lhe move
+     1.6 dB, portanto o "ooooo" não se apaga a meio. O arranque é que tem de ser
+     rápido (senão os primeiros segundos ficam com a baseline do primeiro som que
+     apanharam), e por isso o passo começa ~30x maior e decai com o tempo de voz. */
+  passoDbS: 0.8,
+  aqueceMs: 5000,
+  /* e enquanto a baseline não tiver ouvido voz que chegue, NÃO SE AFIRMA FORMA
+     NENHUMA. Sem isto, o primeiro som depois de ligar o microfone define a baseline
+     e tudo o que vem a seguir parece escuro (ou claro) — nos clips da bancada, que
+     começam todos por uma plosiva, é o que acontece: a boca ficava presa num "O"
+     durante segundos. É a mesma disciplina do chão de ruído do `RIG_AUDIO`, que
+     também não deixa o microfone mandar antes de saber o que é silêncio. */
+  prontoMs: 1200,
+  atkMs: 40,                /* mesma lógica do resto: sobe depressa... */
+  relMs: 90,                /* ...e larga com calma, senão pisca entre sílabas */
+  vozMin: 0.25,             /* nível pós-gate abaixo do qual não se afirma forma nenhuma */
+  /* como o canal redondo se reparte pelos visemes: o "O" leva o dobro do "U", que é
+     o que dá um bico aberto em vez de um beicinho fechado (o solver já multiplica o
+     funnel por 2.2 e o pucker por 1.4) */
+  pesoO: 1, pesoU: 0.5
+};
+
+/* log2 da frequência central de cada banda (média geométrica das fronteiras) */
+const RIG_VISAUDIO_HZ = [50, 200, 400, 800, 1500, 2500, 4000, 8000];
+const RIG_VISAUDIO_FC = [];
+for (let i = 0; i < 7; i++) RIG_VISAUDIO_FC.push(Math.log2(Math.sqrt(RIG_VISAUDIO_HZ[i] * RIG_VISAUDIO_HZ[i + 1])));
+
+/* escreve `sig.au.round` e `sig.au.spread` (0..1) a partir das 7 bandas em dB e do
+   nível já passado pelo gate. Vive no `sig.au` e não em campos novos do `sig` de
+   propósito: é estado do microfone, e sem microfone não existe. */
+function rigAudioShape(sig, bandas, nivel, dt) {
+  const K = RIG_VISAUDIO;
+  const a = sig.au;
+  if (!a || !bandas || bandas.length < 7) return;
+  let sp = 0, sw = 0;
+  for (let i = 0; i < 7; i++) {
+    const p = Math.pow(10, bandas[i] / 10);
+    sp += p; sw += p * RIG_VISAUDIO_FC[i];
+  }
+  const tilt = (bandas[4] + bandas[5]) / 2 - (bandas[1] + bandas[2]) / 2;
+  const brilho = 0.5 * (tilt + K.kCent * (sw / (sp || 1e-12)));
+
+  const voz = rigClamp((nivel - K.vozMin) / (1 - K.vozMin), 0, 1);
+  let x = 0;
+  if (voz > 0) {
+    if (a.brilho === undefined) { a.brilho = brilho; a.vozMs = 0; }
+    a.vozMs += dt * voz;
+    /* seguidor de mediana por passo fixo (aproximação estocástica): ao contrário de
+       uma média, não é arrastado pelos 20 dB de um sibilante — e é uma linha */
+    const passo = K.passoDbS * Math.max(1, K.aqueceMs / (1 + a.vozMs)) * dt * voz / 1000;
+    const d = brilho - a.brilho;
+    a.brilho += Math.sign(d) * Math.min(passo, Math.abs(d));
+    x = brilho - a.brilho;
+  }
+  const rampa = (v, d0, d1) => rigClamp((v - d0) / (d1 - d0), 0, 1);
+  /* peso do arranque: 0 até `prontoMs` de voz ouvida, 1 ao dobro disso */
+  const pronto = rigClamp(((a.vozMs || 0) - K.prontoMs) / K.prontoMs, 0, 1);
+  const alvoS = voz * pronto * rampa(x, K.sDead, K.sCheio);
+  const alvoR = voz * pronto * rampa(-x, K.rDead, K.rCheio);
+  a.spread += (alvoS - a.spread) * rigEmaA(dt, alvoS > a.spread ? K.atkMs : K.relMs);
+  a.round += (alvoR - a.round) * rigEmaA(dt, alvoR > a.round ? K.atkMs : K.relMs);
 }
 
 /* escreve sig.mouth, sig.press e sig.smileW — o resto do bloco é partilhado com a v1 */
@@ -1206,8 +1319,10 @@ function createCalib() {
 /* devolve true quando a calibração já terminou (i.e. o sig está a ser escrito).
    `dtMs` é o tempo desde o frame anterior; só a fala v3 o usa, e quem não o passa
    fica com 16.7 (um frame a 60 Hz), que é o que a v1 sempre assumiu implicitamente.
-   `au` é o microfone — `{db, conf}`, dB instantâneo e confiança (0 = sem mic) — e só
-   é lido com o slider `audioMix` fora do zero; quem não o passa fica em vídeo puro. */
+   `au` é o microfone — `{db, conf, bandas}`, dB instantâneo, confiança (0 = sem mic) e
+   as 7 log-energias do espectro. O `db` só é lido com o `audioMix` ou o `audioVisemes`
+   fora do zero, e as `bandas` só com o `audioVisemes`; quem não os passa fica em vídeo
+   puro, byte a byte. */
 function processLandmarks(lm, bs, sig, cal, SENS, dtMs, au) {
   const dt = dtMs || 16.7;
   const earL = rigDist(lm[159], lm[145]) / rigDist(lm[33], lm[133]);
@@ -1275,11 +1390,19 @@ function processLandmarks(lm, bs, sig, cal, SENS, dtMs, au) {
     const v3 = SENS.speechV3 > 0;
     sig.funnel += (rigClamp(bs.mouthFunnel, 0, 1) - sig.funnel) * 0.4;
     /* microfone: mesma mistura para as três cadeias, calculada uma vez. Com o slider
-       a 0 (omissão) ou sem microfone vivo, `auMix` fica 0 e o caminho é o de sempre. */
+       a 0 (omissão) ou sem microfone vivo, `auMix` fica 0 e o caminho é o de sempre.
+       Os dois usos do microfone têm dose própria e são independentes: o `audioMix`
+       manda na abertura, o `audioVisemes` na forma. Basta um deles para valer a pena
+       medir o nível, mas só o `audioMix` lhe toca no alvo. */
     let auMix = 0, auAlvo = 0;
-    if (SENS.audioMix > 0 && au && au.conf > 0) {
-      auAlvo = rigAudioLevel(sig, au, dt);
-      auMix = rigClamp(SENS.audioMix * au.conf, 0, 1);
+    const auForma = SENS.audioVisemes > 0 && au && au.bandas;
+    if ((SENS.audioMix > 0 || auForma) && au && au.conf > 0) {
+      const nivel = rigAudioLevel(sig, au, dt);
+      if (SENS.audioMix > 0) {
+        auAlvo = nivel;
+        auMix = rigClamp(SENS.audioMix * au.conf, 0, 1);
+      }
+      if (auForma) rigAudioShape(sig, au.bandas, nivel, dt);
     }
     if (v3) {
       rigSpeechV3(bs, sig, calib, SENS, dt, pucker, smile, mouthR, auMix, auAlvo);
@@ -1763,7 +1886,9 @@ function drawModel(ctx, model, sig, SENS, frozen) {
 /* visemeE e closeSpeed nasceram de experiências revertidas (ver "cicatrizes" no README):
    em vez de constantes minhas, são doses do utilizador — a 0/1 são exactamente a cadeia
    validada, e o que os sliders adicionam foi ele que o pôs lá. */
-const SENS_DEFAULTS = { mouthGain: 1, mouthWidth: 1, openHeight: 1, puckerFx: 1, visemeE: 0, closeSpeed: 1, gazeGain: 1, blinkGain: 1, headGain: 1, headMove: 1, sphere: 1, lean: 1, smooth: 1, speechV2: 0, speechV3: 0, speechAuto: 0, audioMix: 0 };
+/* `audioVisemes` entra com omissão neutra: a 0 é exactamente a cadeia de antes — nem
+   se lê o espectro. */
+const SENS_DEFAULTS = { mouthGain: 1, mouthWidth: 1, openHeight: 1, puckerFx: 1, visemeE: 0, closeSpeed: 1, gazeGain: 1, blinkGain: 1, headGain: 1, headMove: 1, sphere: 1, lean: 1, smooth: 1, speechV2: 0, speechV3: 0, speechAuto: 0, audioMix: 0, audioVisemes: 0 };
 /* ---------- favoritos (localStorage, partilhados pelas três páginas) ---------- */
 const FAVS_KEY = 'critter-favs';
 const FAVS_MAX = 60;
