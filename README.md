@@ -208,6 +208,7 @@ serve por http tal como as outras páginas.
 | `rigged.html` | PFP live |
 | `studio.html` | PFP live + painel de afinação (grava em `localStorage`, por critter) |
 | `_rigtest.html` | folha de contacto do rig (ferramenta de dev) |
+| `_uitest.html` | medição do layout mobile em iframes de telemóvel (ferramenta de dev) |
 
 **Nota**: precisa de ser servido por http(s) (getUserMedia não funciona em file://):
 ```
@@ -234,12 +235,28 @@ Para usar como webcam em calls: OBS com Window Capture → Virtual Camera, ou pa
   pessoal, mas afinar em dois dispositivos ao mesmo tempo perde uma das versões. Sem
   autenticação, de propósito: só existe dentro da tailnet
 - **gravar vídeo** (`rigged`/`studio`) — `canvas.captureStream(30)` + a faixa de áudio do
-  microfone num só `MediaStream`, gravados por `MediaRecorder` para `.webm` (VP9/Opus).
-  Grava o **avatar**, não a câmara. A permissão do microfone é pedida só ao carregar em
-  gravar, com timeout: se não for respondida em 8s, grava na mesma sem som
+  microfone num só `MediaStream`, gravados por `MediaRecorder` para **`.mp4`** (H.264
+  baseline + AAC: abre em iPhone, WhatsApp e QuickTime sem conversão; `.webm` fica só
+  como recurso em browsers sem MP4, tipo Firefox). Grava o **avatar**, não a câmara.
+  A permissão do microfone é pedida só ao carregar em gravar, com timeout: se não for
+  respondida em 8s, grava na mesma sem som
 - **paletas** — 18 na lista, mas só as 10 primeiras entram no sorteio. As restantes
   escolhem-se à mão no studio. É de propósito: o ID mapeia a paleta por pesos acumulados,
   portanto mexer na tabela do sorteio mudava a cor de todos os critters já gerados
+
+## Mobile
+
+Em ecrãs pequenos o studio **não sobrepõe nada**: a página passa a fluxo normal com
+scroll nativo — canvas em cima (46svh), título, botões e o painel `studio config`
+(fechado por omissão) por baixo. Não há `position:fixed`: com a página em
+`overflow:hidden` o browser móvel nunca recolhe a barra e o viewport de layout nunca
+coincide com o visível — todas as variantes de gaveta ancorada em baixo (CSS `bottom`,
+Visual Viewport, posicionamento por JS) morreram disso. A pré-visualização da câmara
+fica escondida em mobile: chocava sempre com o cabeçalho, e a pessoa vê-se no avatar.
+
+Para verificar sem telemóvel: `_uitest.html` mede o layout em iframes com tamanho de
+telefone. Tem de ser em iframe — uma janela top-level do Chrome headless tem largura
+mínima ≈512px e não serve para simular 402.
 
 ## Deploy
 
@@ -255,5 +272,9 @@ No homelab corre em container próprio (nginx:alpine, sem build step):
 ```bash
 ssh vmini@100.104.52.12 'cd ~/projetos/the-critters && git pull && /usr/local/bin/docker build -t the-critters .'
 ssh vmini@100.104.52.12 '/usr/local/bin/docker stop the-critters; /usr/local/bin/docker rm the-critters; \
-  /usr/local/bin/docker run -d --name the-critters --restart=always -p 8092:80 the-critters'
+  /usr/local/bin/docker run -d --name the-critters --restart=always -p 8092:80 --memory=32m \
+  -v critters-data:/var/lib/critters the-critters'
 ```
+
+O volume `critters-data` guarda o `data/critters.json` da sincronização — **sem ele, um
+rebuild apaga os favoritos e a afinação de todos os dispositivos**.

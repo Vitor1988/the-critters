@@ -15,12 +15,16 @@ function startRigPage(opts) {
   const DPR = Math.min(window.devicePixelRatio || 1, IS_MOBILE ? 1.5 : 2);
   let W = 0, H = 0;
 
+  /* O tamanho do canvas é decidido pelo CSS da página (ecrã inteiro no desktop, bloco
+     no topo do fluxo em mobile) — aqui só se acerta o buffer interno a essa caixa. */
   function resize() {
-    W = window.innerWidth; H = window.innerHeight;
+    const r = canvas.getBoundingClientRect();
+    W = Math.max(1, Math.round(r.width));
+    H = Math.max(1, Math.round(r.height));
     canvas.width = W * DPR; canvas.height = H * DPR;
-    canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
   }
   window.addEventListener('resize', resize);
+  if (window.ResizeObserver) new ResizeObserver(resize).observe(canvas);
   resize();
 
   const api = { model: null, rig: null, pal: null, id: '', SENS: Object.assign({}, SENS_DEFAULTS), loadCritter, setStatus };
@@ -158,7 +162,10 @@ function startRigPage(opts) {
         }
       } catch (e) { /* um frame falhado do tracker não pode parar o desenho */ }
     } else if (!tracking) {
-      applyIdle(sig, mouse, W, H, idleState);
+      /* em mobile o canvas já não começa em (0,0): as coordenadas do rato/toque têm de
+         passar a ser relativas à caixa dele, senão o olhar fica torto */
+      const r = canvas.getBoundingClientRect();
+      applyIdle(sig, { x: mouse.x - r.left, y: mouse.y - r.top, down: mouse.down }, W, H, idleState);
     }
 
     if (debugMode) {

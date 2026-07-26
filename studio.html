@@ -7,8 +7,8 @@
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Source+Code+Pro:wght@500;900&display=swap');
 *{box-sizing:border-box}
-html,body{margin:0;padding:0;background:#f2f2f2;overscroll-behavior:none;overflow:hidden}
-#render{position:absolute;top:0;left:0}
+html,body{margin:0;padding:0;height:100%;background:#f2f2f2;overscroll-behavior:none;overflow:hidden}
+#render{position:absolute;top:0;left:0;width:100%;height:100%}
 .content{position:relative;margin-top:20px;margin-left:20px;text-align:left;color:#000;z-index:1001;pointer-events:none}
 .header{letter-spacing:0;font-size:24px;font-family:'Source Code Pro',monospace;font-weight:600}
 .header h1{margin:0;font-size:24px}
@@ -26,8 +26,11 @@ button.rec-on{background:#c0261e}
   .content{margin-top:12px;margin-left:12px}
   .header h1{font-size:17px}
   .description{font-size:12px;margin-top:8px;line-height:1.4}
-  .navigation{margin-top:10px}
-  button{padding:10px 12px;font-size:12px;margin-right:6px;margin-bottom:6px}
+  /* flex com wrap: a quebra de linha de inline-blocks deixava um botão a transbordar
+     pela direita quando a linha enchia ao pixel — com flex o embrulho é garantido */
+  .navigation{margin-top:10px;display:flex;flex-wrap:wrap;gap:6px}
+  .navigation button{margin:0}
+  button{padding:10px 12px;font-size:12px}
 }
 .panel{pointer-events:auto;position:fixed;right:12px;top:12px;width:min(230px,44vw);max-height:calc(100vh - 24px);overflow-y:auto;background:rgba(255,255,255,.92);border:2px solid #000;padding:10px 12px;font-family:'Source Code Pro',monospace;font-size:12px;z-index:1002;color:#000}
 .panel summary{cursor:pointer;font-weight:900;margin-bottom:6px}
@@ -41,21 +44,32 @@ button.rec-on{background:#c0261e}
 .sub{margin-top:10px;border-top:1px solid #0002;padding-top:6px}
 .sub summary{cursor:pointer;font-weight:900;font-size:11px;letter-spacing:.04em;text-transform:uppercase;opacity:.7}
 .p-io button{flex:1;padding:8px 6px;margin:0;font-size:11px}
-/* Telemóvel: o painel deixa de ser uma coluna à direita (não cabe, transbordava o
-   ecrã e tapava o critter) e passa a ser uma gaveta em baixo, fechada de início. */
-/* Telemóvel: a gaveta é posicionada por JS (ver `posicionarGaveta`), pela coordenada
-   real da base da área visível. O `bottom` do CSS não serve: é relativo ao viewport de
-   layout, que inclui a faixa tapada pela barra do browser. A câmara sai de cena — é só
-   uma pré-visualização e era ela que andava a estorvar o cabeçalho. */
+/* Telemóvel: nada de sobreposições nem position:fixed. Com overflow:hidden a página não
+   rola, o browser nunca recolhe a barra, e o viewport de layout nunca coincide com o que
+   está visível — foi isso que matou todas as variantes de gaveta ancorada em baixo (por
+   CSS `bottom`, por Visual Viewport, por JS). Em vez disso a página passa a fluxo normal
+   com scroll nativo: canvas em cima, texto, botões e o painel por baixo. O que não couber
+   rola — o browser é que sabe o que está visível, não nós. A câmara continua escondida:
+   é só uma pré-visualização e andava sempre a chocar com o cabeçalho. */
 @media (max-width:700px), (pointer:coarse) and (max-width:1024px){
-  .panel{position:fixed;left:8px;right:8px;bottom:auto;width:auto;font-size:12px;
-         box-shadow:0 -8px 28px rgba(0,0,0,.35)}
+  html,body{height:auto;overflow-y:auto;overflow-x:hidden}
+  #render{position:static;width:100%;height:42vh}
+  .content{margin:10px 12px 16px}
+  .navigation{display:flex;flex-wrap:wrap;gap:6px}
+  .navigation button{margin:0}
+  .panel{position:static;width:auto;max-height:none;margin-top:12px;font-size:12px}
   .panel summary{font-size:14px;padding:10px 0;text-align:center;border:2px solid #000;
                  margin:-2px -4px 6px;background:#000;color:#fff}
   .p-row select,.p-row input[type=range]{height:32px}
   .p-io button{padding:11px 6px;font-size:12px}
   #cam{display:none}
   .favs{max-width:calc(100vw - 24px)}
+}
+/* svh = altura com a barra do browser à vista, estável (não salta ao rolar como vh/dvh) */
+@supports (height:1svh){
+  @media (max-width:700px), (pointer:coarse) and (max-width:1024px){
+    #render{height:46svh}
+  }
 }
 </style>
 </head>
@@ -112,30 +126,11 @@ const painel = document.querySelector('.panel');
 const emGaveta = () => window.matchMedia &&
   matchMedia('(max-width:700px), (pointer:coarse) and (max-width:1024px)').matches;
 if (emGaveta()) painel.removeAttribute('open');
-
-/* Ancorar a gaveta ao fundo do que está *mesmo* visível. Tentei com `bottom` e com
-   offsets da Visual Viewport e em ambos o painel acabou escondido por baixo da barra do
-   browser — o CSS não sabe onde ela acaba. Aqui calcula-se a coordenada da base visível
-   e põe-se o painel logo acima dela. Se isto falhar, o painel fica no topo: visível. */
-function posicionarGaveta() {
-  if (!emGaveta()) { painel.style.top = painel.style.maxHeight = ''; return; }
-  const vv = window.visualViewport;
-  const base = vv ? vv.offsetTop + vv.height : window.innerHeight;
-  painel.style.maxHeight = Math.round(base * 0.62) + 'px';
-  const h = painel.getBoundingClientRect().height;
-  painel.style.top = Math.max(4, base - h - 8) + 'px';
-}
-posicionarGaveta();
-/* a altura muda ao abrir/fechar e quando o conteúdo muda; o evento `toggle` sozinho
-   chegava a correr antes de o layout assentar e o painel abria para fora do ecrã */
-if (window.ResizeObserver) new ResizeObserver(posicionarGaveta).observe(painel);
-painel.addEventListener('toggle', () => setTimeout(posicionarGaveta, 0));
-window.addEventListener('resize', posicionarGaveta);
-window.addEventListener('orientationchange', () => setTimeout(posicionarGaveta, 300));
-if (window.visualViewport) {
-  visualViewport.addEventListener('resize', posicionarGaveta);
-  visualViewport.addEventListener('scroll', posicionarGaveta);
-}
+/* o painel expande para baixo, em fluxo; ao abrir, rolar até ele para o pôr em cena */
+painel.addEventListener('toggle', () => {
+  if (painel.open && emGaveta()) setTimeout(() =>
+    painel.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+});
 
 const palSel = document.getElementById('cfg-palette');
 const mouthSel = document.getElementById('cfg-mouth');

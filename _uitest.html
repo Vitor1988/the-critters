@@ -1,0 +1,62 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>uitest</title>
+<style>iframe{border:1px solid #999;vertical-align:top}</style>
+<iframe id="ph" width="402" height="714" src="studio.html"></iframe>
+<iframe id="dk" width="1280" height="800" src="studio.html"></iframe>
+<iframe id="rg" width="402" height="714" src="rigged.html"></iframe>
+<pre id="out">a medir…</pre>
+<script>
+const out = [];
+const $ = s => document.getElementById(s);
+function rect(el) {
+  if (!el) return null;
+  const b = el.getBoundingClientRect();
+  return [b.left, b.top, b.width, b.height].map(Math.round);
+}
+function medir(win, tag) {
+  const d = win.document;
+  const canvas = d.getElementById('render');
+  const painel = d.querySelector('.panel');
+  const cam = d.getElementById('cam');
+  const desc = d.getElementById('txt-description');
+  out.push(tag + ' canvas=' + JSON.stringify(rect(canvas)) + ' buffer=' + canvas.width + 'x' + canvas.height);
+  if (painel) out.push(tag + ' painel=' + JSON.stringify(rect(painel)) + ' open=' + painel.open +
+    ' pos=' + win.getComputedStyle(painel).position);
+  out.push(tag + ' cam_display=' + win.getComputedStyle(cam).display);
+  out.push(tag + ' scroll=' + d.scrollingElement.scrollWidth + 'x' + d.scrollingElement.scrollHeight +
+    ' vp=' + win.innerWidth + 'x' + win.innerHeight +
+    ' overflow_x=' + (d.scrollingElement.scrollWidth > win.innerWidth));
+  out.push(tag + ' desc=' + desc.textContent.slice(0, 90));
+}
+async function go() {
+  await new Promise(res => setTimeout(res, 7000));
+  try {
+    const ph = $('ph').contentWindow, dk = $('dk').contentWindow, rg = $('rg').contentWindow;
+    medir(ph, 'PH-fechado');
+    medir(dk, 'DESK');
+    medir(rg, 'RIGGED-PH');
+    const painel = ph.document.querySelector('.panel');
+    painel.querySelector('summary').click();
+    await new Promise(res => setTimeout(res, 900));
+    medir(ph, 'PH-aberto');
+    const sel = ph.document.getElementById('cfg-palette');
+    out.push('PH select_palette=' + JSON.stringify(rect(sel)));
+    painel.scrollIntoView({block: 'start'});
+    await new Promise(res => setTimeout(res, 300));
+    const pb = painel.getBoundingClientRect();
+    const hit = ph.document.elementFromPoint(Math.round(pb.left + pb.width / 2), Math.round(pb.top + 10));
+    out.push('PH hit_summary=' + (hit ? hit.tagName : 'null') + ' scrollY=' + Math.round(ph.scrollY));
+    const slid = ph.document.querySelectorAll('#sliders input[type=range]');
+    out.push('PH sliders=' + slid.length + ' primeiro=' + JSON.stringify(rect(slid[0])));
+    for (const b of ph.document.querySelectorAll('.navigation button'))
+      out.push('PH btn "' + b.textContent + '" ' + JSON.stringify(rect(b)) +
+        ' display=' + ph.getComputedStyle(b).display);
+    const de = ph.document.getElementById('txt-description');
+    out.push('PH desc_rect=' + JSON.stringify(rect(de)) + ' scrollW=' + de.scrollWidth);
+  } catch (e) { out.push('ERRO harness: ' + e.message); }
+  $('out').textContent = out.join('\n');
+  document.title = 'PRONTO';
+}
+window.addEventListener('load', go);
+</script>

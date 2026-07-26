@@ -65,7 +65,8 @@ só o `drawPath` é que precisa de um contexto.
 ```bash
 ssh vmini@100.104.52.12 'cd ~/projetos/the-critters && git pull && /usr/local/bin/docker build -t the-critters .'
 ssh vmini@100.104.52.12 '/usr/local/bin/docker rm -f the-critters; \
-  /usr/local/bin/docker run -d --name the-critters --restart=always -p 8092:80 --memory=32m the-critters'
+  /usr/local/bin/docker run -d --name the-critters --restart=always -p 8092:80 --memory=32m \
+  -v critters-data:/var/lib/critters the-critters'
 ```
 
 Página na wiki: `Wiki/public/projetos/the-critters.html` — atualizar se mudar porta,
