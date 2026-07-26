@@ -144,17 +144,15 @@ nunca usam o 0–1 e o queixo tem activação basal. É o que está aqui:
 - **dois sinais independentes, fica o maior** — o blendshape `jawOpen` e a abertura entre
   os lábios interiores medida nos landmarks (13/14 sobre a altura da cara). Um apanha o
   que o outro falha
-- **gate do queixo, só para seladas deliberadas** — o `jawOpen` dispara com o queixo mesmo
-  de lábios selados, e um queixo caído de boca fechada abria o avatar ~40%. O gate cala o
-  sinal do queixo quando `press > 0.45` (zona morta), deixando a distância real entre os
-  lábios — que diz corretamente "fechada" — a mandar. A zona morta importa: o `mouthClose`
-  co-dispara com a fala normal, e um gate linear desde 0 prendia a boca na fala toda
-  (experimentado e recuado)
 - **curva** de expoente 0.85, um empurrão na zona baixa sem distorcer o resto
 - **fecha quase tão depressa como abre** (0.6 / 0.45) — senão a fala corrida lê-se como uma
-  boca permanentemente entreaberta. O snap-to-close (fecho agressivo perto do zero) também
-  foi experimentado e saiu: na fala baixa o alvo vive nessa zona e esmagava a boca contra
-  o zero
+  boca permanentemente entreaberta
+
+**Cicatrizes** (tentado, recuado — não repetir sem teste em câmara real): gate do queixo
+pelo press antes da fusão, snap-to-close perto do zero, e viseme E alimentado pelo smile.
+Os três prendiam a boca na fala real: o `mouthClose` co-dispara com a fala normal, a fala
+baixa vive na zona onde o snap morde, e o E (ratio 0.28) roubava altura às vogais. A
+simulação sintética não tem esse ruído — passou nos números e falhou na cara.
 
 Amplitude de `sig.mouth` numa fala simulada a 4 sílabas/s:
 
@@ -212,12 +210,6 @@ trait. Nasce já com a topologia certa:
     e o queixo pouco aberto; sem isto nunca chegava a ser redondo. `E` e `I` têm `own: 0`
     de propósito — distinguem-se pela largura, e um sorriso de boca fechada dá stretch a
     rodos, que com abertura própria abria a boca do avatar
-  - o sinal do E ouve o smile — `max(mouthStretch, (mouthSmile−0.25)·1.1)`: o stretch
-    sozinho é fraco nas vogais reais, num "eee" falado quem dispara é o smile. A zona
-    morta (0.25) é essencial: o meio sorriso de quem fala contente não é um "eee", e sem
-    ela o E roubava altura às vogais (ratio 0.28 vs 0.82 do A) e prendia a boca. Só para
-    o viseme: a largura (`mouthW`) usa o stretch puro, senão um sorriso esticava a boca
-    duas vezes (via largura e via `expr`)
   - a abertura final é `max(jaw, own)`, portanto **boca fechada é boca fechada**
 - **zona morta** nos sinais de lábio: o tracker nunca dá zero com a cara em repouso, e sem
   ela o resíduo de pucker/stretch mantinha a boca entreaberta
