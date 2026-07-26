@@ -140,6 +140,74 @@ function startRigPage(opts) {
     }
   }
 
+  /* ---------- microfone: só a pedido, nunca no arranque ----------
+     O slider `áudio` do studio mistura o envelope da voz no alvo de abertura da boca
+     (ver `RIG_AUDIO` no engine). A permissão é pedida no momento em que ele sai do
+     zero — que é também um gesto do utilizador, e sem gesto o browser não deixa
+     abrir um AudioContext. Falhar aqui não pode partir nada: fica em vídeo puro. */
+  const auRef = { db: -100, conf: 0 };   /* reutilizado, não se aloca um por frame */
+  let auCtx = null, auAnalyser = null, auStream = null, auBuf = null, auEstado = 'off';
+
+  async function ligarAudio() {
+    if (auEstado !== 'off') return;      /* 'a pedir' | 'on' | 'falhou' — não insiste */
+    auEstado = 'a pedir';
+    setStatus('áudio: à espera da permissão do microfone…');
+    try {
+      /* o cancelamento de eco e a supressão de ruído ajudam o gate automático (tiram-lhe
+         a ventoinha e o retorno das colunas); o ganho automático fica DE FORA de
+         propósito — normalizava a dinâmica, que é precisamente o sinal que se quer */
+      auStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false }
+      });
+      auCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (auCtx.state === 'suspended') await auCtx.resume();
+      auAnalyser = auCtx.createAnalyser();
+      auAnalyser.fftSize = 1024;
+      /* liga-se à fonte e mais nada: encaminhar isto para as colunas era um larsen */
+      auCtx.createMediaStreamSource(auStream).connect(auAnalyser);
+      auBuf = new Float32Array(auAnalyser.fftSize);
+      auEstado = 'on';
+      auRef.conf = 1;
+      setStatus('áudio ligado — a boca segue a voz e a câmara');
+    } catch (err) {
+      desligarAudio();
+      auEstado = 'falhou';
+      const n = err && err.name ? err.name : '';
+      setStatus('áudio: ' + (n === 'NotAllowedError' ? 'permissão do microfone negada'
+        : n === 'NotFoundError' ? 'não há microfone' : 'não arrancou (' + (n || 'erro') + ')') +
+        ' — a boca continua só pela câmara');
+    }
+  }
+
+  function desligarAudio() {
+    if (auStream) { for (const t of auStream.getTracks()) t.stop(); auStream = null; }
+    if (auCtx) { try { auCtx.close(); } catch (e) {} auCtx = null; }
+    auAnalyser = null; auBuf = null;
+    auRef.conf = 0; auRef.db = -100;
+    auEstado = 'off';
+  }
+  api.ligarAudio = ligarAudio;
+  api.desligarAudio = desligarAudio;
+
+  /* RMS do domínio do tempo -> dB. O engine é que trata do chão de ruído e do gate:
+     aqui só se mede, para a bancada offline poder injectar exactamente o mesmo. */
+  function mediAudio() {
+    if (auEstado !== 'on' || !auAnalyser) return;
+    auAnalyser.getFloatTimeDomainData(auBuf);
+    let s = 0;
+    for (let i = 0; i < auBuf.length; i++) s += auBuf[i] * auBuf[i];
+    auRef.db = 20 * Math.log10(Math.sqrt(s / auBuf.length) + 1e-7);
+  }
+
+  /* A página rigged não tem slider: usa o `audioMix` gravado, como qualquer outra
+     sensibilidade. Mas continua a não pedir o microfone no arranque — espera pelo
+     primeiro gesto, que é o mínimo que o browser exige de qualquer maneira. */
+  function talvezAudio() {
+    if (api.SENS.audioMix > 0 && auEstado === 'off') ligarAudio();
+  }
+  window.addEventListener('pointerdown', talvezAudio);
+  window.addEventListener('keydown', talvezAudio);
+
   let detTick = 0, lastTs = -1, lastNow = -1;
   function frame(now) {
     requestAnimationFrame(frame);
@@ -163,7 +231,8 @@ function startRigPage(opts) {
             for (const c of res.faceBlendshapes[0].categories) bs[c.categoryName] = c.score;
           }
           const was = !!cal.ready;
-          processLandmarks(res.faceLandmarks[0], bs, sig, cal, api.SENS, dt);
+          mediAudio();
+          processLandmarks(res.faceLandmarks[0], bs, sig, cal, api.SENS, dt, auRef);
           lastNow = now;
           if (!was && cal.ready) setStatus('tracking — express yourself');
         }
@@ -186,7 +255,12 @@ function startRigPage(opts) {
              alto, quem a está a fechar é a oclusão — e vê-se qual dos dois é */
           ? ' · V3' + (api.SENS.speechAuto > 0 ? '+auto' : '') +
             (sig.v3 ? ' · ap ' + sig.v3.ap.toFixed(2) + ' · oc ' + sig.v3.oc.toFixed(2) : '')
-          : api.SENS.speechV2 > 0 ? ' · V2' : ' · V1');
+          : api.SENS.speechV2 > 0 ? ' · V2' : ' · V1') +
+        /* `au` é o nível DEPOIS do gate: a 0.00 com voz a sair quer dizer que o chão
+           de ruído ainda não assentou ou que o gate a está a cortar */
+        (api.SENS.audioMix > 0 && auEstado === 'on'
+          ? ' · +A au ' + (sig.au ? sig.au.lvl.toFixed(2) : '0.00')
+          : api.SENS.audioMix > 0 ? ' · +A(' + auEstado + ')' : '');
     }
 
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
