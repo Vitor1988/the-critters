@@ -1,0 +1,65 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>paridade python vs browser</title>
+<!-- Corre o MESMO clip pelo tasks-vision do browser (a versao que producao carrega) e
+     devolve a serie do jawOpen. Se nao bater certo com a captura em python, os traces
+     nao representam producao e a bancada nao vale nada — dai este teste ser um gate.
+     Servido pelo tools/parity-server.js, que recebe o resultado por POST. -->
+<body style="background:#111;color:#ddd;font:14px monospace;padding:20px">
+<div id="log">a arrancar...</div>
+<script type="module">
+import { FaceLandmarker, FilesetResolver } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs';
+
+const log = m => { document.getElementById('log').textContent = m; };
+const q = new URLSearchParams(location.search);
+const clip = q.get('clip');
+const fps = parseFloat(q.get('fps') || '29.97');
+
+async function main() {
+  const fileset = await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm');
+  /* CPU de proposito: o GPU delegate no headless daria outro resultado e o que se
+     quer comparar e o modelo, nao o backend */
+  const lm = await FaceLandmarker.createFromOptions(fileset, {
+    baseOptions: {
+      modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+      delegate: 'CPU'
+    },
+    runningMode: 'VIDEO', numFaces: 1, outputFaceBlendshapes: true
+  });
+
+  const v = document.createElement('video');
+  v.src = '/tools/clips/ravdess/' + clip + '.mp4';
+  v.muted = true;
+  await new Promise((ok, err) => { v.onloadeddata = ok; v.onerror = () => err(new Error('video')); });
+
+  const n = Math.floor(v.duration * fps);
+  const jaw = [], ts = [], nomes = [];
+  for (let i = 0; i < n; i++) {
+    /* meio do frame: seek para a fronteira exacta e ambiguo entre dois frames */
+    v.currentTime = (i + 0.5) / fps;
+    await new Promise(ok => { v.onseeked = ok; });
+    const t = Math.round(i * 1000 / fps);
+    const r = lm.detectForVideo(v, t);
+    if (r.faceBlendshapes && r.faceBlendshapes[0]) {
+      const cs = r.faceBlendshapes[0].categories;
+      if (!nomes.length) for (const c of cs) nomes.push(c.categoryName);
+      const j = cs.find(c => c.categoryName === 'jawOpen');
+      jaw.push(j ? j.score : 0);
+    } else jaw.push(null);
+    ts.push(t);
+    if (i % 10 === 0) log('frame ' + i + '/' + n);
+  }
+  log('a enviar ' + jaw.length + ' frames...');
+  await fetch('/paridade', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ clip, fps, jawOpen: jaw, t: ts, bsNames: nomes })
+  });
+  log('FEITO ' + jaw.length);
+  document.title = 'FEITO';
+}
+main().catch(e => {
+  log('ERRO ' + e.message);
+  fetch('/paridade', { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ erro: String(e && e.stack || e) }) });
+});
+</script>
