@@ -43,20 +43,19 @@ button.rec-on{background:#c0261e}
 .p-io button{flex:1;padding:8px 6px;margin:0;font-size:11px}
 /* Telemóvel: o painel deixa de ser uma coluna à direita (não cabe, transbordava o
    ecrã e tapava o critter) e passa a ser uma gaveta em baixo, fechada de início. */
-/* Telemóvel: nada de gaveta colada ao fundo. O `bottom` é relativo ao viewport de
-   layout, que em Chrome/Safari mobile inclui a faixa tapada pela barra do browser —
-   o painel ficava lá, visível para o CSS e escondido para quem está a olhar. Aqui
-   entra no fluxo, logo a seguir aos botões, onde não há nada que o tape. */
+/* Telemóvel: gaveta no rodapé. O `bottom` do CSS é relativo ao viewport de layout,
+   que inclui a faixa tapada pela barra do browser — foi lá que o painel se escondeu
+   antes. Quem sabe onde acaba a área visível é a Visual Viewport API, e é ela que
+   ajusta o `--gaveta` lá em baixo no JS. */
 @media (max-width:700px), (pointer:coarse) and (max-width:1024px){
-  .panel{position:static;left:auto;right:auto;top:auto;bottom:auto;width:auto;
-         margin-top:10px;max-height:none;box-shadow:none;font-size:12px}
-  .panel summary{font-size:14px;padding:9px 0;text-align:center;border:2px solid #000;
+  .panel{position:fixed;left:8px;right:8px;top:auto;width:auto;font-size:12px;
+         bottom:calc(8px + var(--gaveta, 0px));
+         max-height:calc(var(--gaveta-max, 56vh));
+         box-shadow:0 -8px 28px rgba(0,0,0,.35)}
+  .panel summary{font-size:14px;padding:10px 0;text-align:center;border:2px solid #000;
                  margin:-2px -4px 6px;background:#000;color:#fff}
-  .panel[open]{max-height:56vh;overflow-y:auto}
-  @supports (height:1svh){ .panel[open]{max-height:56svh} }
   .p-row select,.p-row input[type=range]{height:32px}
   .p-io button{padding:11px 6px;font-size:12px}
-  .content{margin-right:12px}
   #cam{top:10px;left:auto;right:10px;bottom:auto;width:72px;opacity:.6}
   .favs{max-width:calc(100vw - 24px)}
 }
@@ -111,9 +110,27 @@ const SLIDERS = [
   ['smooth', 'reactivity', 0.3, 2]
 ];
 
+const painel = document.querySelector('.panel');
 if (window.matchMedia && matchMedia('(max-width:700px), (pointer:coarse) and (max-width:1024px)').matches) {
-  document.querySelector('.panel').removeAttribute('open');
+  painel.removeAttribute('open');
 }
+
+/* Ancorar a gaveta à área visível: no telemóvel a barra do browser come o fundo do
+   viewport de layout, e um `bottom:8px` fica por baixo dela. A Visual Viewport sabe
+   quanto é que está tapado — e muda quando a barra aparece/desaparece ou o teclado sobe. */
+(function ancorarGaveta() {
+  const vv = window.visualViewport;
+  if (!vv) return;                       /* sem a API fica o fallback em vh */
+  const ajusta = () => {
+    const tapado = Math.max(0, window.innerHeight - (vv.height + vv.offsetTop));
+    document.documentElement.style.setProperty('--gaveta', tapado + 'px');
+    document.documentElement.style.setProperty('--gaveta-max', Math.round(vv.height * 0.62) + 'px');
+  };
+  ajusta();
+  vv.addEventListener('resize', ajusta);
+  vv.addEventListener('scroll', ajusta);
+  window.addEventListener('orientationchange', () => setTimeout(ajusta, 300));
+})();
 
 const palSel = document.getElementById('cfg-palette');
 const mouthSel = document.getElementById('cfg-mouth');
@@ -214,30 +231,6 @@ document.getElementById('btn-import').addEventListener('click', () => {
   });
   inp.click();
 });
-
-/* ?diag=1 — escreve no ecrã o que preciso de saber quando o layout falha noutro
-   dispositivo: tamanho real do viewport, se as media queries batem, e onde está o
-   painel. Sem isto, depurar mobile à distância é adivinhar. */
-if (new URLSearchParams(location.search).get('diag')) {
-  const linha = () => {
-    const p = document.querySelector('.panel');
-    const r = p.getBoundingClientRect();
-    const vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
-    const mq = matchMedia('(max-width:700px), (pointer:coarse) and (max-width:1024px)').matches;
-    const dentro = r.bottom <= vh + 1 && r.top >= -1 && r.right <= vw + 1 && r.left >= -1;
-    return 'DIAG vp=' + vw + 'x' + vh + ' dpr=' + (window.devicePixelRatio || 1) +
-      ' coarse=' + (matchMedia('(pointer:coarse)').matches ? 'S' : 'N') +
-      ' mq=' + (mq ? 'S' : 'N') + ' aberto=' + (p.open ? 'S' : 'N') +
-      ' painel=' + [r.left, r.top, r.right, r.bottom].map(Math.round).join(',') +
-      ' dentro=' + (dentro ? 'S' : 'N') + ' vis=' + getComputedStyle(p).visibility +
-      ' disp=' + getComputedStyle(p).display + ' pos=' + getComputedStyle(p).position;
-  };
-  const el = document.getElementById('txt-description');
-  const pinta = () => { el.textContent = linha(); el.style.cssText = 'background:#0a0;color:#fff;padding:6px;font-size:11px;word-break:break-all'; };
-  setTimeout(pinta, 800);
-  document.querySelector('.panel').addEventListener('toggle', () => setTimeout(pinta, 50));
-  window.addEventListener('resize', () => setTimeout(pinta, 100));
-}
 
 document.getElementById('btn-rigged').addEventListener('click', () => { window.location.href = 'rigged.html' + window.location.hash; });
 document.getElementById('btn-reset').addEventListener('click', () => {
