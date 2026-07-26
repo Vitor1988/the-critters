@@ -225,7 +225,14 @@ Para usar como webcam em calls: OBS com Window Capture → Virtual Camera, ou pa
   quando um desenho específico precisa de outra coisa. A paleta, a boca e o fundo
   continuam sempre por critter
 - **exportar / importar** — botões no studio: um JSON com favoritos, afinação global e
-  todos os cfgs de critter. O `localStorage` não viaja entre browsers nem para o telemóvel
+  todos os cfgs de critter
+- **sincronização** — o `localStorage` é por browser, portanto abrir no telemóvel dava um
+  avatar sem nada. O servidor guarda o mesmo JSON em `data/critters.json` e as páginas
+  puxam-no ao abrir (se for mais recente) e empurram-no 1,2s depois de cada alteração.
+  Não há backend: é o **módulo WebDAV do nginx** a aceitar o `PUT`, com um volume para os
+  dados sobreviverem a rebuilds. Conflitos: ganha quem gravou por último — chega para uso
+  pessoal, mas afinar em dois dispositivos ao mesmo tempo perde uma das versões. Sem
+  autenticação, de propósito: só existe dentro da tailnet
 - **gravar vídeo** (`rigged`/`studio`) — `canvas.captureStream(30)` + a faixa de áudio do
   microfone num só `MediaStream`, gravados por `MediaRecorder` para `.webm` (VP9/Opus).
   Grava o **avatar**, não a câmara. A permissão do microfone é pedida só ao carregar em

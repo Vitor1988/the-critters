@@ -9,8 +9,11 @@ step: os ficheiros são o artefacto.
 - MediaPipe Face Landmarker (`@mediapipe/tasks-vision`, WASM da CDN) só nas páginas
   rigged/studio. Corre no browser — nada da cara ou da voz sai da máquina.
 - nginx:alpine a servir estático. Container `the-critters`, porta **8092** (https na
-  **8443** via `tailscale serve`), `--memory=32m`,
-  sem volumes (as preferências vivem no `localStorage` do browser).
+  **8443** via `tailscale serve`), `--memory=32m`, volume `critters-data`
+  em `/var/lib/critters` (preferências sincronizadas).
+- **Sincronização sem backend**: as preferências (favoritos, afinação, cfgs) vão para
+  `data/critters.json` pelo módulo WebDAV do nginx (`PUT`/`GET`). O `localStorage`
+  continua a ser a cópia local; o servidor é que faz a ponte entre dispositivos.
 
 ## Ficheiros
 
