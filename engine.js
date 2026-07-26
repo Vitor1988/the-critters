@@ -861,6 +861,13 @@ function rigProfile(t, p) {
   return Math.pow(Math.max(0, 1 - Math.pow(Math.abs(t), p)), 1 / p);
 }
 
+/* pseudo-aleatório determinístico por (instante, ponto), para o boil do traço — o hash
+   clássico de shaders: barato, sem estado, e igual em qualquer máquina */
+function rigBoil(seed, i) {
+  const v = Math.sin(seed * 127.1 + i * 311.7) * 43758.5453;
+  return (v - Math.floor(v)) * 2 - 1;
+}
+
 /* Cada estilo entra no rig como uma *linha de repouso* — a sua boca fechada, tal como é
    desenhada — mais estes dois ajustes de carácter. `ratio` multiplica a proporção do
    viseme (o 'o' abre redondo e pequeno, o 'grin' largo e baixo) e `p` o expoente do
@@ -923,7 +930,7 @@ function createSig() {
   return {
     blinkL: 1, blinkR: 1, mouth: 0, mouthW: 0, expr: 0, yaw: 0, pitch: 0, roll: 0,
     gx: 0, gy: 0, hx: 0, hy: 0, joy: 0, sad: 0, surprise: 0, anger: 0, wide: 0,
-    pucker: 0, stretch: 0, jawX: 0, funnel: 0
+    pucker: 0, stretch: 0, jawX: 0, funnel: 0, press: 0
   };
 }
 
@@ -996,6 +1003,9 @@ function processLandmarks(lm, bs, sig, cal, SENS) {
     /* fecha quase tão depressa como abre: entre sílabas a boca tem mesmo de voltar, senão
        a fala corrida lê-se como uma boca permanentemente entreaberta */
     sig.mouth += (openT - sig.mouth) * rigClamp((openT > sig.mouth ? 0.6 : 0.45) * SENS.smooth, 0.05, 1);
+    /* oclusão M/B/P: além de travar a abertura (openT acima), os lábios pressionados são
+       uma *pose* — ver o bloco press no applyRig. Ataque rápido: uma bilabial dura ~100ms */
+    sig.press += (press - sig.press) * (press > sig.press ? 0.6 : 0.4);
     const smile = (bs.mouthSmileLeft + bs.mouthSmileRight) / 2;
     const frown = (bs.mouthFrownLeft + bs.mouthFrownRight) / 2;
     sig.expr += (rigClamp(smile - frown, -1, 1) - sig.expr) * 0.25;
@@ -1028,6 +1038,7 @@ function processLandmarks(lm, bs, sig, cal, SENS) {
     const cornerY = (lm[61].y + lm[291].y) / 2;
     const exprT = rigClamp(-(cornerY - lm[17].y) / faceH * 9, -1, 1);
     sig.expr += (exprT - sig.expr) * 0.3;
+    sig.press += (0 - sig.press) * 0.4;   /* sem blendshapes não há sinal de press */
   }
 
   sig.gx += (rigClamp(gazeX - calib.gx, -1, 1) - sig.gx) * 0.35;
@@ -1187,11 +1198,10 @@ function buildRig(model) {
     const c = rigCentroid(restLine);
     const style = RIG_MOUTH_STYLE[model.mouth.style] || RIG_MOUTH_STYLE.chill;
     const rngM = mulberry32(hashStr(model.id + ':mouth'));
-    const w = [], uu = [], wob = [];
+    const w = [], uu = [];
     for (let i = 0; i < n; i++) {
       w.push(Math.pow(Math.sin(Math.PI * i / (n - 1)), 1.3));
       uu.push(i / (n - 1));
-      wob.push((rngM() - .5) * 2.2);
     }
 
     /* range of motion: quanto pode cada lábio andar antes de sair da cara.
@@ -1213,6 +1223,18 @@ function buildRig(model) {
     const budget = Math.min(down + up, Math.max(10, (chinY - noseY) * 0.85));
     const dn = Math.min(down, budget * 0.75);
 
+    /* limites articulares por ponto: os budgets acima são globais e medidos com o perfil
+       sin^1.3, mas a abertura aplica o perfil superelipse do viseme — perto dos cantos
+       um vale ~4x o outro, e em bocas de cantos altos a soma passava o nariz. O clamp
+       por ponto é a rede: nenhum ponto sai do seu intervalo, aconteça o que acontecer.
+       Se o repouso já cruza a linha do nariz/queixo (nariz baixo), o limite é o repouso. */
+    const capTop = [], capBot = [];
+    for (let i = 0; i < n; i++) {
+      const flat = restLine[0][1] + (restLine[n - 1][1] - restLine[0][1]) * uu[i];
+      capTop.push(Math.min(restLine[i][1], noseY));
+      capBot.push(Math.max(restLine[i][1], flat, chinY));
+    }
+
     /* contorno fechado: lábio de cima (n) + lábio de baixo pela volta (n-2, sem repetir
        os cantos). Os offsets são partilhados entre os pontos que coincidem quando a
        boca está fechada, senão a linha de repouso abria-se com o jitter. */
@@ -1223,11 +1245,11 @@ function buildRig(model) {
     for (let i = n - 2; i > 0; i--) { pts.push([restLine[i][0], restLine[i][1]]); offsAll.push(offs[i]); }
     const sh = {
       pts, offs: offsAll, rest: restLine.map(p => [p[0], p[1]]),
-      half: n, u: uu, wob,
+      half: n, u: uu, wobSeed: Math.floor(rngM() * 997), capTop, capBot,
       halfW: Math.max(2, (rigBounds(restLine).x1 - rigBounds(restLine).x0) / 2),
       corner0: restLine[0][1], corner1: restLine[n - 1][1],
       ratioK: style.ratio, pK: style.p,
-      closed: true, lw: lineW, alpha: 1, alphaMul: 1, intensity: 5, jit: 0,
+      closed: true, lw: lineW, lw0: lineW, alpha: 1, alphaMul: 1, intensity: 5, jit: 0,
       fill: pal.line, stroke: pal.line, role: 'mouth', part: 'mouthRig',
       cx: c[0], cy: c[1], sx: 1, sy: 1, ox: 0, oy: 0,
       down: dn, up: Math.min(up, budget - dn),
@@ -1252,7 +1274,7 @@ function buildRig(model) {
    applyRig — avalia o rig para o estado actual dos sinais.
    Ordem do stack: bind pose → mandíbula → largura → cantos → pucker → jawX
    -------------------------------------------------------------------------- */
-function applyRig(model, rig, sig, SENS) {
+function applyRig(model, rig, sig, SENS, now) {
   for (const b of rig.eyes) {
     const bl = b.side === 'L' ? sig.blinkL : b.side === 'R' ? sig.blinkR : (sig.blinkL + sig.blinkR) / 2;
     b.sh.sy = rigClamp(bl * (1 - sig.joy * 0.3) + sig.wide * 0.25, 0.03, 1.3);
@@ -1280,31 +1302,56 @@ function applyRig(model, rig, sig, SENS) {
        dois: o queixo ou o que o próprio viseme exige. Em repouso ambos são zero — a boca
        fecha na sua linha de origem, seja ela o sorriso, o "w" ou a serra do zigzag. */
     const H = D.amount * D.ratio * M.ratioK * 2 * M.halfW * wx * SENS.openHeight;
-    const up = Math.min(H * D.upShare, M.up);
-    const dn = Math.min(H - H * D.upShare, M.down);
-    const lift = smile * (smile > 0 ? M.liftUp : M.liftDown);
-    const openK = M.down > 0 ? rigClamp(dn / M.down, 0, 1) : 0;
+    const dn0 = Math.min(H - H * D.upShare, M.down);
+    const openK = M.down > 0 ? rigClamp(dn0 / M.down, 0, 1) : 0;
+
+    /* Oclusão M/B/P: lábios pressionados são uma *pose*, não só um travão — a linha
+       achata (o desenho da 'w' ou da 'zigzag' alisa-se ao pressionar), estreita um
+       nadinha e o traço engrossa. Só de boca fechada: o (1-openK) apaga o press assim
+       que a mandíbula abre. É o abre-fecha-pressiona que faz a fala ler-se como fala. */
+    const pr = rigClamp((sig.press - 0.15) / 0.85, 0, 1) * (1 - openK);
+    const prF = pr * 0.3;
+    M.lw = M.lw0 * (1 + pr * 0.45);
+    const wxp = wx * (1 - pr * 0.08);
+
+    /* Budgets *conjuntos*: o lift dos cantos, a subida do lábio e o achatamento do press
+       disputam o mesmo espaço até ao nariz (e o frown com a descida, até ao queixo).
+       Cada um sozinho respeitava o limite mas a soma passava-o até ~3px — descontam-se
+       uns aos outros, e o /1.05 absorve a amplitude do boil do traço. */
+    const lift = smile > 0
+      ? Math.min(smile * M.liftUp, M.liftUp * (1 - prF))
+      : Math.max(smile * M.liftDown, -M.liftDown * (1 - prF));
+    const up = Math.min(H * D.upShare,
+      Math.max(0, M.up * (1 - Math.max(0, lift) / Math.max(1e-3, M.liftUp) - prF) / 1.05));
+    const dn = Math.min(dn0,
+      Math.max(0, M.down * (1 - Math.max(0, -lift) / Math.max(1e-3, M.liftDown) - prF) / 1.05));
+
     const p = D.p * M.pK;
     const n = M.half;
+    /* o boil é multiplicativo na abertura: dá um traço vivo, redesenhado ~8x/s como na
+       animação à mão, e desaparece com ela — a boca fechada continua a colapsar exacta.
+       Determinístico: sem `now` (testes em node, contact sheet) fica o frame 0. */
+    const bkt = Math.floor((now || 0) / 125) + M.wobSeed;
     for (let i = 0; i < n; i++) {
       const b = M.rest[i];
       const w = rigProfile(-1 + 2 * M.u[i], p);
-      /* o wobble é multiplicativo na abertura: dá um traço vivo à boca aberta e
-         desaparece com ela, portanto a boca fechada continua a colapsar exacta */
-      const jitter = 1 + M.wob[i] * 0.05;
-      const x = M.cx + (b[0] - M.cx) * wx;
-      const top = b[1] - lift * (1 - w);
+      const jitter = 1 + rigBoil(bkt, i) * 0.05;
+      const flat = M.corner0 + (M.corner1 - M.corner0) * M.u[i];
+      const capT = M.capTop[i], capB = M.capBot[i];
+      /* a base (com o achatamento do press) é presa primeiro, e as duas metades partem
+         dela — é isso que mantém o colapso exacto mesmo quando um clamp morde */
+      const by = rigClamp(b[1] + (flat - b[1]) * prF, capT, capB);
+      const x = M.cx + (b[0] - M.cx) * wxp;
       M.pts[i][0] = x;
-      M.pts[i][1] = top - up * w * jitter;
+      M.pts[i][1] = rigClamp(by - lift * (1 - w) - up * w * jitter, capT, capB);
       if (i > 0 && i < n - 1) {
         /* o lábio de baixo é a mandíbula, e a mandíbula é lisa: à medida que a boca abre,
            vai deixando de copiar o desenho de cima (os dois lóbulos da 'w', os dentes da
            'zigzag') e assenta na linha entre os cantos */
-        const flat = M.corner0 + (M.corner1 - M.corner0) * M.u[i];
-        const bot = b[1] + (flat - b[1]) * openK * 0.8 - lift * (1 - w);
+        const bot = by + (flat - by) * openK * 0.8 - lift * (1 - w);
         const j = 2 * n - 2 - i;
         M.pts[j][0] = x;
-        M.pts[j][1] = bot + dn * w * jitter;
+        M.pts[j][1] = rigClamp(bot + dn * w * jitter, capT, capB);
       }
     }
     M.ox = shiftX;

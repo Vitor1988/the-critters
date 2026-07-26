@@ -187,7 +187,7 @@ function startRigPage(opts) {
     ctx.rotate(sig.roll * 0.5);
     ctx.scale(S, S);
     if (api.model) {
-      applyRig(api.model, api.rig, sig, api.SENS);
+      applyRig(api.model, api.rig, sig, api.SENS, now);
       drawModel(ctx, api.model, sig, api.SENS);
     }
     ctx.restore();

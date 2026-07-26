@@ -66,8 +66,20 @@ abrem com a mesma mecânica — cantos ancorados, visemes, budgets medidos na ca
   próprio; não curva a boca toda
 - **peças interiores são filhas do lábio de baixo** — a língua acompanha a mandíbula, a
   garganta é deformada no espaço do buraco, por isso nunca sai dele
-- **ruído partilhado** — os pontos coincidentes das duas metades do lábio partilham o mesmo
-  offset de jitter, para a boca fechada colapsar numa linha limpa
+- **boil do traço** — a boca aberta redesenha o contorno ~8×/s (hash determinístico por
+  instante × ponto, `rigBoil`), como o line boil da animação à mão. É multiplicativo na
+  abertura: fechada, colapsa numa linha exacta, com qualquer combinação de sinais
+- **oclusão M/B/P** — o `mouthClose`/`mouthPress` do tracker é uma *pose*, não só um
+  travão da abertura: de boca fechada a linha achata (a `w` e a `zigzag` alisam-se ao
+  pressionar), estreita um nadinha e o traço engrossa. O `(1-openK)` apaga o efeito assim
+  que a mandíbula abre. É o ritmo abre-fecha-pressiona que faz a fala ler-se como fala
+- **budgets conjuntos + limites por ponto** — o lift dos cantos, a subida do lábio e o
+  achatamento do press disputam o mesmo espaço até ao nariz, e descontam-se uns aos
+  outros. E como os budgets globais eram medidos com um perfil (`sin^1.3`) mas aplicados
+  com outro (a superelipse do viseme) — perto dos cantos um vale ~4× o outro e a soma
+  chegava a passar a linha do nariz ~6px —, cada ponto tem ainda tecto e chão próprios
+  (`capTop`/`capBot`, medidos na bind pose) onde o `applyRig` prende o resultado final:
+  zero violações em 972k poses varridas, com o colapso da boca fechada intacto
 - **lábio de baixo liso** — o lábio de baixo é a mandíbula, e a mandíbula não tem os dois
   lóbulos da `w` nem os dentes de serra da `zigzag`. À medida que a boca abre, deixa de
   copiar o desenho de cima e assenta na linha entre os cantos (o budget do queixo conta
@@ -188,15 +200,16 @@ trait. Nasce já com a topologia certa:
   - a abertura final é `max(jaw, own)`, portanto **boca fechada é boca fechada**
 - **zona morta** nos sinais de lábio: o tracker nunca dá zero com a cara em repouso, e sem
   ela o resíduo de pucker/stretch mantinha a boca entreaberta
-- o **wobble é gravado por vértice** no build: partilhado na linha (senão a boca fechada
-  não fecha) e multiplicativo na abertura, para o traço não perder o ar de desenhado à mão
+- o wobble estático por vértice deu lugar ao **boil do traço** (ver o rig da boca): o
+  mesmo contrato — multiplicativo na abertura, fechada colapsa exacta — mas o contorno é
+  redesenhado ~8×/s, com uma semente própria por critter
 
 Vê-la: `_rigtest.html?set=visemes&mouth=11&ids=<id>`.
 
 `_rigtest.html?ids=<id,id,…>&cw=470&set=mouth|head|visemes` desenha a folha de contacto do rig
-(cada critter × 8 poses, com as linhas do nariz e do queixo a vermelho). `set=head` cobre
-as poses de cabeça e `set=visemes` as vogais. É a forma rápida de ver o efeito de uma alteração ao rig sem câmara —
-serve por http tal como as outras páginas.
+(cada critter × as poses do set, com as linhas do nariz e do queixo a vermelho). `set=head`
+cobre as poses de cabeça e `set=visemes` as vogais + a oclusão M. É a forma rápida de ver o
+efeito de uma alteração ao rig sem câmara — serve por http tal como as outras páginas.
 
 ## Ficheiros
 

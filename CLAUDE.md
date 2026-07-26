@@ -42,7 +42,9 @@ step: os ficheiros são o artefacto.
 - **As sensibilidades são globais** (`critter-sens`), com override opcional por avatar em
   `cfg.sens` — são da cara de quem usa, não do bicho.
 - **A boca não sai da cara por construção**, não por um limite fixo: os budgets de abertura
-  são medidos na bind pose, no `buildRig`, a partir do espaço real entre nariz e queixo.
+  são medidos na bind pose, no `buildRig`, a partir do espaço real entre nariz e queixo —
+  e cada ponto tem tecto/chão próprios (`capTop`/`capBot`) onde o `applyRig` prende o
+  resultado final.
 - **A câmara exige contexto seguro** — `https`, `localhost` ou `file://`. Por http num IP
   o browser nem pede autorização, e o rig cai em modo rato. Daí o `tailscale serve` na
   8443: **`https://vitors-mac-mini.taile6a561.ts.net:8443/` é o URL a usar**, o
