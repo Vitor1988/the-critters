@@ -1421,6 +1421,7 @@ function toggleFav(id) {
   const i = l.indexOf(id);
   if (i >= 0) l.splice(i, 1); else l.unshift(id);
   try { localStorage.setItem(FAVS_KEY, JSON.stringify(l.slice(0, FAVS_MAX))); } catch (e) {}
+  syncTouch();
   return i < 0;
 }
 
@@ -1436,6 +1437,7 @@ function loadGlobalSens() {
 }
 function saveGlobalSens(sens) {
   try { localStorage.setItem(SENS_KEY, JSON.stringify(sens)); } catch (e) {}
+  syncTouch();
 }
 /* as do avatar, se existirem, ganham à base global */
 function resolveSens(id) {
@@ -1464,9 +1466,53 @@ function importAll(data) {
   return Object.keys(data.critters || {}).length;
 }
 
+/* ---------- sincronização com o servidor ----------
+   O localStorage é por browser: abrir no telemóvel dava um avatar sem nada. O servidor
+   guarda o mesmo JSON do exportar/importar num ficheiro (WebDAV do nginx, sem backend).
+   Resolução de conflitos: ganha quem gravou por último — chega para uso pessoal, mas
+   duas afinações em paralelo em dispositivos diferentes perdem uma. */
+const SYNC_URL = 'data/critters.json';
+const SYNC_AT_KEY = 'critter-sync-at';
+let syncTimer = 0, syncOn = true;
+
+function syncStamp() { try { return +localStorage.getItem(SYNC_AT_KEY) || 0; } catch (e) { return 0; } }
+
+/* traz o do servidor se for mais recente que o que está neste dispositivo */
+function syncPull() {
+  return fetch(SYNC_URL + '?t=' + Date.now(), { cache: 'no-store' })
+    .then(r => (r.ok ? r.json() : null))
+    .then(data => {
+      if (!data || !data.updatedAt || data.updatedAt <= syncStamp()) return false;
+      importAll(data);
+      try { localStorage.setItem(SYNC_AT_KEY, String(data.updatedAt)); } catch (e) {}
+      return true;
+    })
+    .catch(() => false);
+}
+
+function syncPush() {
+  if (!syncOn) return Promise.resolve(false);
+  const data = exportAll();
+  data.updatedAt = Date.now();
+  return fetch(SYNC_URL, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
+  }).then(r => {
+    if (r.ok) { try { localStorage.setItem(SYNC_AT_KEY, String(data.updatedAt)); } catch (e) {} }
+    else if (r.status === 405 || r.status === 403) syncOn = false;  /* servidor sem escrita */
+    return r.ok;
+  }).catch(() => false);
+}
+
+/* chamar depois de qualquer alteração: agrupa as gravações seguidas numa só */
+function syncTouch() {
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(syncPush, 1200);
+}
+
 function loadCritterCfg(id) {
   try { return JSON.parse(localStorage.getItem('critter-cfg:' + id)) || {}; } catch (e) { return {}; }
 }
 function saveCritterCfg(id, cfg) {
   try { localStorage.setItem('critter-cfg:' + id, JSON.stringify(cfg)); } catch (e) {}
+  syncTouch();
 }

@@ -6,6 +6,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Source+Code+Pro:wght@500;900&display=swap');
+*{box-sizing:border-box}
 html,body{margin:0;padding:0;background:#f2f2f2;overscroll-behavior:none;overflow:hidden}
 #render{position:absolute;top:0;left:0}
 .content{position:relative;margin-top:20px;margin-left:20px;text-align:left;color:#000;z-index:1001;pointer-events:none}
@@ -41,7 +42,17 @@ button.rec-on{background:#c0261e}
 .sub{margin-top:10px;border-top:1px solid #0002;padding-top:6px}
 .sub summary{cursor:pointer;font-weight:900;font-size:11px;letter-spacing:.04em;text-transform:uppercase;opacity:.7}
 .p-io button{flex:1;padding:8px 6px;margin:0;font-size:11px}
-@media (max-width:600px){.panel{width:180px;font-size:11px}}
+/* Telemóvel: o painel deixa de ser uma coluna à direita (não cabe, transbordava o
+   ecrã e tapava o critter) e passa a ser uma gaveta em baixo, fechada de início. */
+@media (max-width:700px){
+  .panel{left:8px;right:8px;top:auto;bottom:8px;width:auto;max-height:min(62vh,430px);font-size:12px;
+         box-shadow:0 -6px 24px rgba(0,0,0,.18)}
+  .panel summary{font-size:13px;padding:2px 0}
+  .p-row select,.p-row input[type=range]{height:30px}
+  .p-io button{padding:11px 6px;font-size:12px}
+  #cam{top:10px;right:10px;bottom:auto;width:84px}
+  .favs{max-width:calc(100vw - 24px)}
+}
 </style>
 </head>
 <body>
@@ -92,6 +103,10 @@ const SLIDERS = [
   ['lean', 'lean (olhos)', 0, 2],
   ['smooth', 'reactivity', 0.3, 2]
 ];
+
+if (window.matchMedia && matchMedia('(max-width:700px)').matches) {
+  document.querySelector('.panel').removeAttribute('open');
+}
 
 const palSel = document.getElementById('cfg-palette');
 const mouthSel = document.getElementById('cfg-mouth');
@@ -184,6 +199,7 @@ document.getElementById('btn-import').addEventListener('click', () => {
       try {
         const n = importAll(JSON.parse(r.result));
         page.loadCritter(page.id);
+        syncPush();
         page.setStatus('importado: ' + n + ' critters + favoritos + afinação');
       } catch (e) { page.setStatus('importação falhou: ' + e.message); }
     };

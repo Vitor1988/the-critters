@@ -300,6 +300,9 @@ function startRigPage(opts) {
   const h = window.location.hash.slice(1);
   loadCritter(/^[0-9a-z]{6,10}$/.test(h) ? h : randomId());
   renderFavs();
+  /* o que estiver no servidor e for mais recente ganha — é isto que faz as preferências
+     aparecerem no telemóvel sem exportar nada à mão */
+  syncPull().then(veio => { if (veio) { loadCritter(api.id); renderFavs(); } });
   requestAnimationFrame(frame);
   startTracking();
   return api;
