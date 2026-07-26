@@ -148,11 +148,19 @@ nunca usam o 0–1 e o queixo tem activação basal. É o que está aqui:
 - **fecha quase tão depressa como abre** (0.6 / 0.45) — senão a fala corrida lê-se como uma
   boca permanentemente entreaberta
 
-**Cicatrizes** (tentado, recuado — não repetir sem teste em câmara real): gate do queixo
-pelo press antes da fusão, snap-to-close perto do zero, e viseme E alimentado pelo smile.
-Os três prendiam a boca na fala real: o `mouthClose` co-dispara com a fala normal, a fala
-baixa vive na zona onde o snap morde, e o E (ratio 0.28) roubava altura às vogais. A
+**Cicatrizes** (tentado, recuado — não repetir sem teste em câmara real): snap-to-close
+perto do zero, viseme E alimentado pelo smile, e gate no queixo *com* a trava pós-fusão em
+simultâneo. Prendiam a boca na fala real: o `mouthClose` co-dispara com a fala normal, a
+fala baixa vive na zona onde o snap morde, e o E (ratio 0.28) roubava altura às vogais. A
 simulação sintética não tem esse ruído — passou nos números e falhou na cara.
+
+**`fala v2` (toggle no studio, desligado por omissão)** — a parte que afinal fazia falta,
+isolada para A/B ao vivo: o press cala o *queixo* antes da fusão e deixa de travar depois.
+Com press crónico, a trava pós-fusão da v1 põe um teto na abertura (~82% com press 0.3)
+que nenhum `mouth gain` fura — é por isso que o slider parece pouco expressivo na v1. Na
+v2 o teto é 100% (vogal com press 0.3: 0.30 → 0.37), o gain mapeia quase 1:1, e as seladas
+deliberadas passam a fechar de facto (queixo caído de lábios selados: 0.46 → 0.02). O modo
+debug (`d`) mostra o `pr` para se ver o nível de press de cada cara.
 
 Amplitude de `sig.mouth` numa fala simulada a 4 sílabas/s:
 

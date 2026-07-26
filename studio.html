@@ -99,6 +99,7 @@ button.rec-on{background:#c0261e}
     <details class="sub" open>
       <summary>sensibilidade</summary>
       <div class="p-row p-check"><label><input type="checkbox" id="cfg-sens-local"> afinação só deste avatar</label></div>
+      <div class="p-row p-check"><label><input type="checkbox" id="cfg-fala-v2"> fala v2 (experimental)</label></div>
       <div id="sliders"></div>
     </details>
   </details>
@@ -136,6 +137,21 @@ const palSel = document.getElementById('cfg-palette');
 const mouthSel = document.getElementById('cfg-mouth');
 const bgInput = document.getElementById('cfg-bg');
 const localChk = document.getElementById('cfg-sens-local');
+const falaV2Chk = document.getElementById('cfg-fala-v2');
+
+/* comuta ao vivo entre a cadeia validada (v1) e a experimental (gate no queixo, sem
+   trava do press) — grava como qualquer sensibilidade, global ou deste avatar */
+falaV2Chk.addEventListener('change', () => {
+  const v = falaV2Chk.checked ? 1 : 0;
+  page.SENS.speechV2 = v;
+  if (localChk.checked) {
+    const c = loadCritterCfg(page.id);
+    c.sens = Object.assign({}, c.sens, { speechV2: v });
+    saveCritterCfg(page.id, c);
+  } else {
+    saveGlobalSens(Object.assign(loadGlobalSens(), { speechV2: v }));
+  }
+});
 
 PALETTES.forEach((p, i) => palSel.add(new Option(p.name, i)));
 MOUTH_STYLES.forEach((m, i) => mouthSel.add(new Option(m, i)));
@@ -169,6 +185,7 @@ function syncPanel(p) {
   mouthSel.value = cfg.traits && cfg.traits.mouth !== undefined ? cfg.traits.mouth : t.mouth;
   bgInput.value = p.pal.bg;
   localChk.checked = !!p.sensLocal;
+  falaV2Chk.checked = !!p.SENS.speechV2;
   for (const [key] of SLIDERS) {
     document.getElementById('s-' + key).value = p.SENS[key];
     document.getElementById('v-' + key).textContent = p.SENS[key].toFixed(2);

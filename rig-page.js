@@ -173,7 +173,7 @@ function startRigPage(opts) {
         ' · jaw ' + sig.mouth.toFixed(2) + ' · yaw ' + sig.yaw.toFixed(2) + ' · pitch ' + sig.pitch.toFixed(2) +
         ' · roll ' + sig.roll.toFixed(2) + ' · gaze ' + sig.gx.toFixed(2) + ',' + sig.gy.toFixed(2) +
         ' · joy ' + sig.joy.toFixed(2) + ' · wide ' + sig.wide.toFixed(2) +
-        ' · pk ' + sig.pucker.toFixed(2) + ' · fn ' + sig.funnel.toFixed(2) + ' · st ' + sig.stretch.toFixed(2) + ' · jx ' + sig.jawX.toFixed(2);
+        ' · pk ' + sig.pucker.toFixed(2) + ' · fn ' + sig.funnel.toFixed(2) + ' · st ' + sig.stretch.toFixed(2) + ' · jx ' + sig.jawX.toFixed(2) + ' · pr ' + sig.press.toFixed(2);
     }
 
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);

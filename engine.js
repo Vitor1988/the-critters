@@ -993,18 +993,24 @@ function processLandmarks(lm, bs, sig, cal, SENS) {
        qualquer fala ocupar o curso todo, do 8 para o 80.
        Dois sinais independentes, fica o maior: o blendshape do queixo e a abertura entre
        os lábios interiores medida nos landmarks. Um apanha o que o outro falha. */
-    /* NOTA: já se tentou "melhorar" isto duas vezes (gate do queixo pelo press antes da
-       fusão, snap-to-close, E via smile) e ambas prenderam a boca na cara real — o
+    /* NOTA: já se tentou "melhorar" isto às cegas duas vezes (snap-to-close, E via
+       smile, gate+trava em simultâneo) e ambas prenderam a boca na cara real — o
        mouthClose co-dispara com a fala normal e a fala baixa vive nas zonas onde esses
-       ajustes mordem. Isto é o comportamento validado ao vivo; mexer outra vez só com
-       teste em câmara real, não com simulação. */
-    const openBS = (bs.jawOpen - (calib.jaw || 0) - 0.02) / RIG_JAW_SPAN;
-    const openLM = (mouthR - calib.mouth - 0.004) / RIG_LIP_SPAN;
-    const jaw = rigClamp(Math.pow(rigClamp(Math.max(openBS, openLM), 0, 1), 0.85) * SENS.mouthGain, 0, 1);
+       ajustes mordem. A v1 é o comportamento validado ao vivo; alterações só por A/B
+       com o toggle `fala v2` do studio, nunca por a simulação bater certo. */
     const press = rigClamp(bs.mouthClose + (bs.mouthPressLeft + bs.mouthPressRight) / 2, 0, 1);
     const pucker = rigClamp(bs.mouthPucker, 0, 1);
+    /* fala v2 (toggle no studio, para A/B ao vivo): o press cala o *queixo* antes da
+       fusão e deixa de travar depois. Com press crónico, a trava pós-fusão da v1 põe um
+       teto na abertura (~82% com press 0.3) que nenhum mouth gain fura — é isso que a
+       v2 liberta; as seladas continuam a fechar porque a distância entre lábios manda. */
+    const v2 = SENS.speechV2 > 0;
+    const openBS0 = (bs.jawOpen - (calib.jaw || 0) - 0.02) / RIG_JAW_SPAN;
+    const openBS = v2 ? openBS0 * Math.max(0, 1 - 1.1 * press) : openBS0;
+    const openLM = (mouthR - calib.mouth - 0.004) / RIG_LIP_SPAN;
+    const jaw = rigClamp(Math.pow(rigClamp(Math.max(openBS, openLM), 0, 1), 0.85) * SENS.mouthGain, 0, 1);
     sig.funnel += (rigClamp(bs.mouthFunnel, 0, 1) - sig.funnel) * 0.4;
-    const openT = jaw * (1 - 0.6 * press) * (1 - 0.35 * pucker);
+    const openT = jaw * (v2 ? 1 : 1 - 0.6 * press) * (1 - 0.35 * pucker);
     /* fecha quase tão depressa como abre: entre sílabas a boca tem mesmo de voltar, senão
        a fala corrida lê-se como uma boca permanentemente entreaberta */
     sig.mouth += (openT - sig.mouth) * rigClamp((openT > sig.mouth ? 0.6 : 0.45) * SENS.smooth, 0.05, 1);
@@ -1459,7 +1465,7 @@ function drawModel(ctx, model, sig, SENS, frozen) {
   if (clipped) ctx.restore();
 }
 
-const SENS_DEFAULTS = { mouthGain: 1, mouthWidth: 1, openHeight: 1, puckerFx: 1, gazeGain: 1, blinkGain: 1, headGain: 1, headMove: 1, sphere: 1, lean: 1, smooth: 1 };
+const SENS_DEFAULTS = { mouthGain: 1, mouthWidth: 1, openHeight: 1, puckerFx: 1, gazeGain: 1, blinkGain: 1, headGain: 1, headMove: 1, sphere: 1, lean: 1, smooth: 1, speechV2: 0 };
 /* ---------- favoritos (localStorage, partilhados pelas três páginas) ---------- */
 const FAVS_KEY = 'critter-favs';
 const FAVS_MAX = 60;
