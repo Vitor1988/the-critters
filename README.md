@@ -148,11 +148,14 @@ nunca usam o 0–1 e o queixo tem activação basal. É o que está aqui:
 - **fecha quase tão depressa como abre** (0.6 / 0.45) — senão a fala corrida lê-se como uma
   boca permanentemente entreaberta
 
-**Cicatrizes** (tentado, recuado — não repetir sem teste em câmara real): snap-to-close
-perto do zero, viseme E alimentado pelo smile, e gate no queixo *com* a trava pós-fusão em
-simultâneo. Prendiam a boca na fala real: o `mouthClose` co-dispara com a fala normal, a
-fala baixa vive na zona onde o snap morde, e o E (ratio 0.28) roubava altura às vogais. A
-simulação sintética não tem esse ruído — passou nos números e falhou na cara.
+**Cicatrizes** (tentado como constante fixa, recuado — não repetir sem teste em câmara
+real): snap-to-close perto do zero, viseme E alimentado pelo smile, e gate no queixo *com*
+a trava pós-fusão em simultâneo. Prendiam a boca na fala real: o `mouthClose` co-dispara
+com a fala normal, a fala baixa vive na zona onde o snap morde, e o E (ratio 0.28) roubava
+altura às vogais. A simulação sintética não tem esse ruído — passou nos números e falhou
+na cara. As duas primeiras renasceram como **sliders com omissão neutra** (`viseme E`,
+`fecho`): a dose passou a ser de quem usa, não minha — a 0/1 são exactamente a cadeia
+validada, `fecho` a 2 é o antigo snap, `viseme E` a 1 é a experiência revertida.
 
 **`fala v2` (toggle no studio, desligado por omissão)** — a parte que afinal fazia falta,
 isolada para A/B ao vivo: o press cala o *queixo* antes da fusão e deixa de travar depois.

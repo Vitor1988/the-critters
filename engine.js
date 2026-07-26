@@ -827,7 +827,10 @@ function rigVisemeWeights(sig, SENS) {
   const open = rigClamp(sig.mouth, 0, 1);
   const pk = dead(rigClamp(sig.pucker, 0, 1), 0.12);
   const fn = dead(rigClamp(sig.funnel, 0, 1), 0.12);
-  const st = dead(rigClamp(sig.mouthW * 2, 0, 1), 0.1);
+  /* o slider `viseme E` dosa o quanto o smile alimenta o E — a 0 (omissão) esta linha
+     é exactamente a validada (só mouthW*2) */
+  const eDose = SENS && SENS.visemeE !== undefined ? SENS.visemeE : 0;
+  const st = dead(rigClamp(Math.max(sig.mouthW * 2, (sig.smileW || 0) * eDose), 0, 1), 0.1);
   const w = {
     U: pk * 1.4 * fx,               /* é aqui que o slider 'pucker fx' entra nos visemes */
     O: fn * 2.2 * fx,               /* generoso, para o "O" sair mesmo redondo */
@@ -930,7 +933,7 @@ function createSig() {
   return {
     blinkL: 1, blinkR: 1, mouth: 0, mouthW: 0, expr: 0, yaw: 0, pitch: 0, roll: 0,
     gx: 0, gy: 0, hx: 0, hy: 0, joy: 0, sad: 0, surprise: 0, anger: 0, wide: 0,
-    pucker: 0, stretch: 0, jawX: 0, funnel: 0, press: 0
+    pucker: 0, stretch: 0, jawX: 0, funnel: 0, press: 0, smileW: 0
   };
 }
 
@@ -1013,7 +1016,9 @@ function processLandmarks(lm, bs, sig, cal, SENS) {
     const openT = jaw * (v2 ? 1 : 1 - 0.6 * press) * (1 - 0.35 * pucker);
     /* fecha quase tão depressa como abre: entre sílabas a boca tem mesmo de voltar, senão
        a fala corrida lê-se como uma boca permanentemente entreaberta */
-    sig.mouth += (openT - sig.mouth) * rigClamp((openT > sig.mouth ? 0.6 : 0.45) * SENS.smooth, 0.05, 1);
+    /* `fecho` (closeSpeed) só escala a descida: a 1 é o 0.45 validado, acima fecha mais
+       seco entre sílabas (a versão contínua do snap-to-close, doseada pelo utilizador) */
+    sig.mouth += (openT - sig.mouth) * rigClamp((openT > sig.mouth ? 0.6 : 0.45 * SENS.closeSpeed) * SENS.smooth, 0.05, 1);
     /* oclusão M/B/P: além de travar a abertura (openT acima), os lábios pressionados são
        uma *pose* — ver o bloco press no applyRig. Ataque rápido: uma bilabial dura ~100ms */
     sig.press += (press - sig.press) * (press > sig.press ? 0.6 : 0.4);
@@ -1033,6 +1038,9 @@ function processLandmarks(lm, bs, sig, cal, SENS) {
     const stretch = rigClamp((bs.mouthStretchLeft + bs.mouthStretchRight) / 2, 0, 1);
     sig.pucker += (pucker - sig.pucker) * 0.4;
     sig.stretch += (stretch - sig.stretch) * 0.4;
+    /* canal do "eee": o smile com zona morta (o meio sorriso de quem fala não conta).
+       Só entra no viseme E, e doseado pelo slider `viseme E` — a 0 não existe. */
+    sig.smileW += (Math.max(0, smile - 0.25) * 1.1 - sig.smileW) * 0.4;
     sig.mouthW += (rigClamp((stretch - pucker) * 0.8, -0.5, 0.5) - sig.mouthW) * 0.3;
     sig.jawX += (rigClamp((bs.mouthRight - bs.mouthLeft) + (bs.jawRight - bs.jawLeft) * 0.6, -1, 1) - sig.jawX) * 0.35;
     sig.blinkL += (rigClamp(1 - bs.eyeBlinkRight * 1.6 * SENS.blinkGain, 0.02, 1) - sig.blinkL) * 0.5;
@@ -1050,6 +1058,7 @@ function processLandmarks(lm, bs, sig, cal, SENS) {
     const exprT = rigClamp(-(cornerY - lm[17].y) / faceH * 9, -1, 1);
     sig.expr += (exprT - sig.expr) * 0.3;
     sig.press += (0 - sig.press) * 0.4;   /* sem blendshapes não há sinal de press */
+    sig.smileW += (0 - sig.smileW) * 0.4; /* nem de smile para o viseme E */
   }
 
   sig.gx += (rigClamp(gazeX - calib.gx, -1, 1) - sig.gx) * 0.35;
@@ -1465,7 +1474,10 @@ function drawModel(ctx, model, sig, SENS, frozen) {
   if (clipped) ctx.restore();
 }
 
-const SENS_DEFAULTS = { mouthGain: 1, mouthWidth: 1, openHeight: 1, puckerFx: 1, gazeGain: 1, blinkGain: 1, headGain: 1, headMove: 1, sphere: 1, lean: 1, smooth: 1, speechV2: 0 };
+/* visemeE e closeSpeed nasceram de experiências revertidas (ver "cicatrizes" no README):
+   em vez de constantes minhas, são doses do utilizador — a 0/1 são exactamente a cadeia
+   validada, e o que os sliders adicionam foi ele que o pôs lá. */
+const SENS_DEFAULTS = { mouthGain: 1, mouthWidth: 1, openHeight: 1, puckerFx: 1, visemeE: 0, closeSpeed: 1, gazeGain: 1, blinkGain: 1, headGain: 1, headMove: 1, sphere: 1, lean: 1, smooth: 1, speechV2: 0 };
 /* ---------- favoritos (localStorage, partilhados pelas três páginas) ---------- */
 const FAVS_KEY = 'critter-favs';
 const FAVS_MAX = 60;

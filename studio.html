@@ -43,6 +43,7 @@ button.rec-on{background:#c0261e}
 .p-io{display:flex;gap:6px}
 .sub{margin-top:10px;border-top:1px solid #0002;padding-top:6px}
 .sub summary{cursor:pointer;font-weight:900;font-size:11px;letter-spacing:.04em;text-transform:uppercase;opacity:.7}
+.s-h{margin:12px 0 2px;font-weight:900;font-size:10px;letter-spacing:.06em;text-transform:uppercase;opacity:.5;border-bottom:1px solid #0002;padding-bottom:2px}
 .p-io button{flex:1;padding:8px 6px;margin:0;font-size:11px}
 /* Telemóvel: nada de sobreposições nem position:fixed. Com overflow:hidden a página não
    rola, o browser nunca recolhe a barra, e o viewport de layout nunca coincide com o que
@@ -109,18 +110,22 @@ button.rec-on{background:#c0261e}
 <script type="module">
 import { FaceLandmarker, FilesetResolver } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs';
 
+/* os 11 sliders originais mantêm chave, range e valores gravados; os dois novos
+   (viseme E, fecho) têm omissão neutra — a 0/1 nada muda. O 5º campo é o grupo. */
 const SLIDERS = [
-  ['mouthGain', 'mouth gain', 0.4, 2],
-  ['mouthWidth', 'mouth width', 0, 2],
-  ['openHeight', 'open height', 0.4, 1.6],
-  ['puckerFx', 'pucker fx', 0, 1.5],
-  ['gazeGain', 'gaze gain', 0.3, 2],
-  ['blinkGain', 'blink gain', 0.5, 2.5],
-  ['headGain', 'head gain', 0, 2],
-  ['headMove', 'head move', 0, 2.5],
-  ['sphere', 'bola (boca/nariz)', 0, 2],
-  ['lean', 'lean (olhos)', 0, 2],
-  ['smooth', 'reactivity', 0.3, 2]
+  ['mouthGain', 'mouth gain', 0.4, 2, 'boca'],
+  ['mouthWidth', 'mouth width', 0, 2, 'boca'],
+  ['openHeight', 'open height', 0.4, 1.6, 'boca'],
+  ['puckerFx', 'pucker fx', 0, 1.5, 'boca'],
+  ['visemeE', 'viseme E (fendas no eee)', 0, 1.5, 'boca'],
+  ['closeSpeed', 'fecho (entre sílabas)', 0.5, 2, 'boca'],
+  ['smooth', 'reactivity', 0.3, 2, 'boca'],
+  ['gazeGain', 'gaze gain', 0.3, 2, 'cabeça e olhos'],
+  ['blinkGain', 'blink gain', 0.5, 2.5, 'cabeça e olhos'],
+  ['headGain', 'head gain', 0, 2, 'cabeça e olhos'],
+  ['headMove', 'head move', 0, 2.5, 'cabeça e olhos'],
+  ['sphere', 'bola (boca/nariz)', 0, 2, 'cabeça e olhos'],
+  ['lean', 'lean (olhos)', 0, 2, 'cabeça e olhos']
 ];
 
 const painel = document.querySelector('.panel');
@@ -157,7 +162,15 @@ PALETTES.forEach((p, i) => palSel.add(new Option(p.name, i)));
 MOUTH_STYLES.forEach((m, i) => mouthSel.add(new Option(m, i)));
 
 const slidersEl = document.getElementById('sliders');
-for (const [key, label, mn, mx] of SLIDERS) {
+let grupoAtual = '';
+for (const [key, label, mn, mx, grupo] of SLIDERS) {
+  if (grupo && grupo !== grupoAtual) {
+    grupoAtual = grupo;
+    const h = document.createElement('div');
+    h.className = 's-h';
+    h.textContent = grupo;
+    slidersEl.appendChild(h);
+  }
   const row = document.createElement('div');
   row.className = 'p-row';
   row.innerHTML = '<span>' + label + ' <b id="v-' + key + '"></b></span>' +
