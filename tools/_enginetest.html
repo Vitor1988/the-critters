@@ -1,0 +1,78 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>engine no browser</title>
+<!-- A bancada corre o engine em node. Isto corre-o onde ele de facto vive: um browser.
+     Serve para apanhar o que o node nao apanha (sintaxe que o V8 do node aceita e o do
+     Chrome nao, globais em falta) e para confirmar que as tres cadeias respondem.
+     Servir a raiz do projecto e abrir /tools/_enginetest.html -->
+<body style="background:#111;color:#ddd;font:13px/1.5 monospace;padding:20px">
+<pre id="out">a correr...</pre>
+<script src="/engine.js"></script>
+<script>
+const linhas = [];
+function mkLm(gap) {
+  const lm = [];
+  for (let i = 0; i < 478; i++) lm.push({ x: 0.5, y: 0.5, z: 0 });
+  const set = (i, x, y) => { lm[i] = { x, y, z: 0 }; };
+  set(10, 0.5, 0.30); set(152, 0.5, 0.70);
+  set(33, 0.42, 0.42); set(133, 0.46, 0.42); set(159, 0.44, 0.415); set(145, 0.44, 0.425);
+  set(362, 0.54, 0.42); set(263, 0.58, 0.42); set(386, 0.56, 0.415); set(374, 0.56, 0.425);
+  set(234, 0.38, 0.5); set(454, 0.62, 0.5); set(1, 0.5, 0.5);
+  set(13, 0.5, 0.585); set(14, 0.5, 0.585 + gap);
+  set(61, 0.46, 0.59); set(291, 0.54, 0.59); set(17, 0.5, 0.62); set(468, 0.44, 0.42);
+  return lm;
+}
+function mkBs(o) {
+  const bs = {};
+  for (const k of ['jawOpen','mouthClose','mouthPressLeft','mouthPressRight','mouthPucker',
+    'mouthFunnel','mouthSmileLeft','mouthSmileRight','mouthFrownLeft','mouthFrownRight',
+    'mouthStretchLeft','mouthStretchRight','mouthRollLower','mouthRollUpper','eyeSquintLeft',
+    'eyeSquintRight','eyeWideLeft','eyeWideRight','browInnerUp','browOuterUpLeft',
+    'browOuterUpRight','browDownLeft','browDownRight','eyeBlinkLeft','eyeBlinkRight',
+    'eyeLookOutLeft','eyeLookInLeft','eyeLookOutRight','eyeLookInRight','eyeLookUpLeft',
+    'eyeLookUpRight','eyeLookDownLeft','eyeLookDownRight','mouthLeft','mouthRight',
+    'jawLeft','jawRight']) bs[k] = 0;
+  return Object.assign(bs, o);
+}
+const POSE = {
+  vogal: [0.014, { jawOpen: 0.18 }],
+  selada: [0.002, { jawOpen: 0.55, mouthClose: 0.6, mouthPressLeft: 0.3, mouthPressRight: 0.3 }],
+  bilabial: [0.001, { jawOpen: 0.10, mouthClose: 0.55, mouthPressLeft: 0.4, mouthPressRight: 0.4,
+    mouthRollLower: 0.3, mouthRollUpper: 0.3 }]
+};
+let falhas = 0;
+for (const [tag, extra] of [['v1', {}], ['v2', { speechV2: 1 }], ['v3', { speechV3: 1 }]]) {
+  const S = Object.assign({}, SENS_DEFAULTS, extra);
+  const res = {};
+  for (const p in POSE) {
+    const sig = createSig(), cal = createCalib();
+    for (let i = 0; i < 55; i++) processLandmarks(mkLm(0.002), mkBs({ jawOpen: 0.05 }), sig, cal, S, 16.7);
+    for (let i = 0; i < 40; i++) processLandmarks(mkLm(POSE[p][0]), mkBs(POSE[p][1]), sig, cal, S, 16.7);
+    const w = rigVisemeWeights(sig, S);
+    if (!isFinite(sig.mouth) || !isFinite(w.A)) { falhas++; res[p] = 'NaN!'; }
+    else res[p] = sig.mouth.toFixed(3);
+  }
+  linhas.push(tag + '  vogal ' + res.vogal + '  selada ' + res.selada + '  bilabial ' + res.bilabial);
+}
+/* dt a 30 Hz nao pode mudar a v1 (que nao o usa) mas muda a v3 (que o usa) */
+function comDt(S, dt) {
+  const sig = createSig(), cal = createCalib();
+  for (let i = 0; i < 55; i++) processLandmarks(mkLm(0.002), mkBs({ jawOpen: 0.05 }), sig, cal, S, dt);
+  for (let i = 0; i < 6; i++) processLandmarks(mkLm(0.014), mkBs({ jawOpen: 0.18 }), sig, cal, S, dt);
+  return sig.mouth;
+}
+const S1 = Object.assign({}, SENS_DEFAULTS), S3 = Object.assign({}, SENS_DEFAULTS, { speechV3: 1 });
+const v1a = comDt(S1, 16.7), v1b = comDt(S1, 33.3);
+const v3a = comDt(S3, 16.7), v3b = comDt(S3, 33.3);
+linhas.push('');
+linhas.push('dt 16.7 vs 33.3 ms apos 6 frames de vogal:');
+linhas.push('  v1  ' + v1a.toFixed(4) + ' / ' + v1b.toFixed(4) + (v1a === v1b ? '  (igual — a v1 ignora o dt, correcto)' : '  <-- a v1 NAO devia mudar!'));
+linhas.push('  v3  ' + v3a.toFixed(4) + ' / ' + v3b.toFixed(4) + (v3b > v3a ? '  (o passo maior chega mais longe — correcto)' : '  <-- a v3 devia usar o dt!'));
+if (v1a !== v1b) falhas++;
+if (!(v3b > v3a)) falhas++;
+
+linhas.push('');
+linhas.push(falhas ? falhas + ' FALHA(S)' : 'engine ok no browser');
+document.getElementById('out').textContent = linhas.join('\n');
+document.title = falhas ? 'FALHOU' : 'OK';
+</script>

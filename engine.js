@@ -929,20 +929,160 @@ function rigBounds(pts) {
 const RIG_JAW_SPAN = 0.42;
 const RIG_LIP_SPAN = 0.085;
 
+/* --------------------------------------------------------------------------
+   fala v3 — EXPERIMENTAL, atrás do toggle `speechV3` (omissão 0 = não existe).
+   Não é, e não pode passar a ser, o caminho por omissão sem A/B ao vivo: ver a
+   NOTA no `processLandmarks`. Duas tentativas anteriores bateram certo na
+   simulação e prenderam a boca na cara real; desta vez há uma bancada de vídeo
+   real por trás (`tools/`), o que baixa o risco mas não substitui a cara dele.
+
+   O que muda face à v1, e porquê:
+
+   · **semântica do `mouthClose`.** No ARKit o `mouthClose` é o quanto os lábios
+     fecham *apesar* do queixo estar aberto. A v1 trata-o como ruído e trava com
+     ele *depois* da fusão — e é isso que põe um tecto na abertura quando ele
+     dispara cronicamente. Aqui desconta-se ao queixo *antes*, que é o que ele
+     significa, e a linha de base desconta-se com a mesma combinação para o
+     repouso desta cara continuar a dar zero.
+   · **oclusão como sinal próprio.** Os lábios enrolados (`mouthRoll*`) e o press
+     dizem "M/B/P" muito melhor do que o `mouthClose` sozinho. Ataque de 15 ms
+     porque uma bilabial dura ~100 ms e chegar tarde é o mesmo que faltar.
+   · **filtros em milissegundos, não em frames.** One Euro nos crus (parado
+     filtra muito, em movimento deixa passar o ataque) e EMA assimétrico no
+     alvo. A v1 muda de comportamento entre 30 e 60 fps porque os coeficientes
+     são por frame; esta não.
+   · **o hold cede à oclusão.** Segura a boca entre sílabas rápidas, mas nunca
+     contra uma bilabial — é essa a diferença entre um hold e uma trava, e foi
+     uma trava que prendeu a boca das duas vezes anteriores.
+   -------------------------------------------------------------------------- */
+const RIG_V3 = {
+  /* Estes números saíram do `tools/gridsearch.js`: grelha de 324 combinações sobre
+     12 clips de vídeo real, com 4 em holdout, seguida de descida por coordenadas.
+     Não são escolhas de gosto — mas também não são verdade revelada: são o que
+     ganha *nestes* clips (dois actores americanos a declamar duas frases), e é
+     por isso que a v3 fica atrás de um toggle até ele a ver na cara dele. */
+  k: 1.1,           /* quanto do mouthClose se desconta ao queixo */
+  gamma: 0.7,       /* curva da abertura (a v1 usa 0.85; mais baixo levanta a fala baixa) */
+  /* as constantes de tempo partiram das da v1 (subida 0.6/frame = 18 ms, descida
+     0.45/frame = 28 ms), não de números redondos: a v3 não pode estrear-se mais
+     lenta do que aquilo que substitui. O grid acabou por fechar ainda mais depressa. */
+  atkMs: 20,        /* constante de subida da boca */
+  relMs: 18,        /* e de descida (o `fecho` do utilizador escala esta) */
+  ocAtkMs: 30,      /* oclusão: o grid preferiu-a mais calma do que os 15 ms previstos */
+  ocRelMs: 30,
+  ocGate: 0.9,      /* quanto a oclusão fecha a boca no máximo */
+  /* zona morta da oclusão: sem ela, a v3 repetia o erro que a NOTA descreve —
+     descontar o mouthClose ao queixo E fechar com ele outra vez. Na fala normal o
+     mouthClose co-dispara a 0.25 com o queixo a 0.18, e sem esta margem isso
+     bastava para cortar 25% da abertura de uma vogal limpa. */
+  ocDead: 0.15,
+  /* o par hold é o contrapeso do `relMs` curto: fecha depressa entre sílabas, mas
+     não deixa a boca colapsar a zero em cada vale de 30 ms — sem ele o fecho rápido
+     lê-se como tremor */
+  holdMs: 140,      /* anti-flicker: tempo mínimo antes de deixar cair */
+  holdFloor: 0.22,  /* e o piso, em fracção do pico recente */
+  eGateLo: 0.10,    /* o "eee" só conta com a boca já a abrir... */
+  eGateHi: 0.30,    /* ...e conta por inteiro a partir daqui */
+  euro: { minCut: 1.5, beta: 0.5, dCut: 1.0 },
+  auto: { decay: 0.06, minSpan: 0.15 }   /* decay em unidades por segundo */
+};
+
+/* coeficiente de um EMA de constante `tau` (ms) para um passo de `dt` (ms). É isto
+   que torna a cadeia independente da cadência: a 30 ou a 60 fps o mesmo tau dá o
+   mesmo tempo de subida. */
+const rigEmaA = (dt, tau) => rigClamp(1 - Math.exp(-dt / Math.max(1, tau)), 0.02, 1);
+
+/* One Euro: corte adaptativo à velocidade. Com a cara parada filtra muito (mata o
+   tremor do tracker, que é o que faz a boca vibrar em silêncio); em movimento
+   filtra pouco (não come o ataque da sílaba). Um EMA fixo tem de escolher um dos
+   dois — é o compromisso que a v1 paga. */
+function rigOneEuro(st, x, dt, cfg) {
+  const dtS = Math.max(0.001, dt / 1000);
+  if (st.x === null) { st.x = x; st.dx = 0; return x; }
+  const alfa = fc => 1 / (1 + 1 / (2 * Math.PI * fc * dtS));
+  st.dx += alfa(cfg.dCut) * ((x - st.x) / dtS - st.dx);
+  st.x += alfa(cfg.minCut + cfg.beta * Math.abs(st.dx)) * (x - st.x);
+  return st.x;
+}
+
+/* escreve sig.mouth, sig.press e sig.smileW — o resto do bloco é partilhado com a v1 */
+function rigSpeechV3(bs, sig, calib, SENS, dt, pucker, smile, mouthR) {
+  const K = RIG_V3;
+  let v = sig.v3;
+  if (!v) v = sig.v3 = { jf: { x: null, dx: 0 }, cf: { x: null, dx: 0 }, oc: 0, ap: 0,
+    pico: 0, holdT: 0, alvoAnt: 0, smile: smile, lo: 0, hi: K.auto.minSpan };
+
+  const jf = rigOneEuro(v.jf, rigClamp(bs.jawOpen, 0, 1), dt, K.euro);
+  const cf = rigOneEuro(v.cf, rigClamp(bs.mouthClose, 0, 1), dt, K.euro);
+
+  /* abertura pelo blendshape, com o mouthClose descontado no sítio certo, e pelos
+     landmarks — fica a maior, como na v1: um apanha o que o outro falha */
+  const base = (calib.jaw || 0) - K.k * (calib.close || 0);
+  const apBS = (jf - K.k * cf - base - 0.02) / RIG_JAW_SPAN;
+  const apLM = (mouthR - calib.mouth - 0.004) / RIG_LIP_SPAN;
+  let ap = rigClamp(Math.max(apBS, apLM), 0, 1);
+
+  /* auto-range (só com `speechAuto`): normaliza pelo curso que esta pessoa usa de
+     facto. O `minSpan` é o que impede o "do 8 para o 80" que matou a ideia da
+     primeira vez — com a boca quase parada, o span não encolhe abaixo dele. */
+  if (SENS.speechAuto > 0) {
+    const passo = K.auto.decay * dt / 1000;
+    v.lo = Math.min(ap, v.lo + passo);
+    v.hi = Math.max(ap, v.hi - passo);
+    ap = rigClamp((ap - v.lo) / Math.max(K.auto.minSpan, v.hi - v.lo), 0, 1);
+  }
+
+  /* oclusão M/B/P: o fecho que o queixo não explica, mais os lábios enrolados,
+     mais o press. Os três juntos separam uma bilabial de uma boca simplesmente
+     fechada — que era o que faltava à v1 para não travar a fala normal. */
+  const oc = rigClamp(2 * Math.max(0, cf - 0.5 * jf - K.ocDead) +
+    0.5 * ((bs.mouthRollLower || 0) + (bs.mouthRollUpper || 0)) +
+    0.4 * (bs.mouthPressLeft + bs.mouthPressRight), 0, 1);
+  v.oc += (oc - v.oc) * rigEmaA(dt, oc > v.oc ? K.ocAtkMs : K.ocRelMs);
+
+  v.ap = ap;   /* guardado só para o debug: com `ap` alto e a boca fechada, quem fecha é a oclusão */
+  let alvo = rigClamp(Math.pow(ap, K.gamma) * SENS.mouthGain *
+    (1 - K.ocGate * v.oc) * (1 - 0.35 * pucker), 0, 1);
+
+  /* hold anti-flicker, que cede à oclusão */
+  v.pico = Math.max(alvo, v.pico * Math.exp(-dt / 400));
+  if (alvo > v.alvoAnt) v.holdT = K.holdMs; else v.holdT -= dt;
+  v.alvoAnt = alvo;
+  if (v.holdT > 0 && v.oc < 0.4) alvo = Math.max(alvo, K.holdFloor * v.pico);
+
+  /* os sliders continuam a fazer o que dizem: `reactivity` encurta as duas
+     constantes, `fecho` só a de descida — como na v1, mas agora em ms */
+  const tau = (alvo > sig.mouth ? K.atkMs : K.relMs / SENS.closeSpeed) / SENS.smooth;
+  sig.mouth += (alvo - sig.mouth) * rigEmaA(dt, tau);
+  sig.press = v.oc;
+
+  /* E vs sorriso: quem fala a sorrir tem um sorriso *lento* por baixo; o "eee" é um
+     evento por cima dele. A baseline de 2 s separa os dois, e o gate por abertura
+     impede que um sorriso de boca fechada roube altura às vogais. */
+  v.smile += (smile - v.smile) * rigEmaA(dt, 2000);
+  const gate = rigClamp((ap - K.eGateLo) / (K.eGateHi - K.eGateLo), 0, 1);
+  sig.smileW += (rigClamp(Math.max(0, smile - v.smile) * 1.8, 0, 1) * gate - sig.smileW) * rigEmaA(dt, 60);
+}
+
 function createSig() {
   return {
     blinkL: 1, blinkR: 1, mouth: 0, mouthW: 0, expr: 0, yaw: 0, pitch: 0, roll: 0,
     gx: 0, gy: 0, hx: 0, hy: 0, joy: 0, sad: 0, surprise: 0, anger: 0, wide: 0,
-    pucker: 0, stretch: 0, jawX: 0, funnel: 0, press: 0, smileW: 0
+    pucker: 0, stretch: 0, jawX: 0, funnel: 0, press: 0, smileW: 0,
+    /* estado dos filtros da fala v3, criado a primeira utilizacao — na v1/v2 fica nulo */
+    v3: null
   };
 }
 
 function createCalib() {
-  return { ready: null, frames: 0, acc: { ear: 0, mouth: 0, jaw: 0, yaw: 0, pitch: 0, roll: 0, hx: 0, hy: 0, mouthW: 0, gx: 0, gy: 0 } };
+  return { ready: null, frames: 0, acc: { ear: 0, mouth: 0, jaw: 0, close: 0, yaw: 0, pitch: 0, roll: 0, hx: 0, hy: 0, mouthW: 0, gx: 0, gy: 0 } };
 }
 
-/* devolve true quando a calibração já terminou (i.e. o sig está a ser escrito) */
-function processLandmarks(lm, bs, sig, cal, SENS) {
+/* devolve true quando a calibração já terminou (i.e. o sig está a ser escrito).
+   `dtMs` é o tempo desde o frame anterior; só a fala v3 o usa, e quem não o passa
+   fica com 16.7 (um frame a 60 Hz), que é o que a v1 sempre assumiu implicitamente. */
+function processLandmarks(lm, bs, sig, cal, SENS, dtMs) {
+  const dt = dtMs || 16.7;
   const earL = rigDist(lm[159], lm[145]) / rigDist(lm[33], lm[133]);
   const earR = rigDist(lm[386], lm[374]) / rigDist(lm[362], lm[263]);
   const faceH = rigDist(lm[10], lm[152]);
@@ -973,13 +1113,14 @@ function processLandmarks(lm, bs, sig, cal, SENS) {
     a.ear += (earL + earR) / 2;
     a.mouth += mouthR;
     a.jaw += bs ? bs.jawOpen : 0;
+    a.close += bs ? bs.mouthClose : 0;   /* so a v3 usa; na v1/v2 fica gravado e ignorado */
     a.yaw += yawRaw; a.pitch += pitchRaw; a.roll += rollRaw;
     a.hx += hxRaw; a.hy += hyRaw; a.mouthW += mouthW;
     a.gx += gazeX; a.gy += gazeY;
     if (cal.frames >= 50) {
       const n = cal.frames;
       cal.ready = {
-        ear: a.ear / n, mouth: a.mouth / n, jaw: a.jaw / n, mouthW: a.mouthW / n,
+        ear: a.ear / n, mouth: a.mouth / n, jaw: a.jaw / n, close: a.close / n, mouthW: a.mouthW / n,
         yaw: a.yaw / n, pitch: a.pitch / n, roll: a.roll / n,
         hx: a.hx / n, hy: a.hy / n, gx: a.gx / n, gy: a.gy / n
       };
@@ -1003,6 +1144,12 @@ function processLandmarks(lm, bs, sig, cal, SENS) {
        com o toggle `fala v2` do studio, nunca por a simulação bater certo. */
     const press = rigClamp(bs.mouthClose + (bs.mouthPressLeft + bs.mouthPressRight) / 2, 0, 1);
     const pucker = rigClamp(bs.mouthPucker, 0, 1);
+    const smile = (bs.mouthSmileLeft + bs.mouthSmileRight) / 2;
+    const v3 = SENS.speechV3 > 0;
+    sig.funnel += (rigClamp(bs.mouthFunnel, 0, 1) - sig.funnel) * 0.4;
+    if (v3) {
+      rigSpeechV3(bs, sig, calib, SENS, dt, pucker, smile, mouthR);
+    } else {
     /* fala v2 (toggle no studio, para A/B ao vivo): o press cala o *queixo* antes da
        fusão e deixa de travar depois. Com press crónico, a trava pós-fusão da v1 põe um
        teto na abertura (~82% com press 0.3) que nenhum mouth gain fura — é isso que a
@@ -1012,7 +1159,6 @@ function processLandmarks(lm, bs, sig, cal, SENS) {
     const openBS = v2 ? openBS0 * Math.max(0, 1 - 1.1 * press) : openBS0;
     const openLM = (mouthR - calib.mouth - 0.004) / RIG_LIP_SPAN;
     const jaw = rigClamp(Math.pow(rigClamp(Math.max(openBS, openLM), 0, 1), 0.85) * SENS.mouthGain, 0, 1);
-    sig.funnel += (rigClamp(bs.mouthFunnel, 0, 1) - sig.funnel) * 0.4;
     const openT = jaw * (v2 ? 1 : 1 - 0.6 * press) * (1 - 0.35 * pucker);
     /* fecha quase tão depressa como abre: entre sílabas a boca tem mesmo de voltar, senão
        a fala corrida lê-se como uma boca permanentemente entreaberta */
@@ -1022,7 +1168,7 @@ function processLandmarks(lm, bs, sig, cal, SENS) {
     /* oclusão M/B/P: além de travar a abertura (openT acima), os lábios pressionados são
        uma *pose* — ver o bloco press no applyRig. Ataque rápido: uma bilabial dura ~100ms */
     sig.press += (press - sig.press) * (press > sig.press ? 0.6 : 0.4);
-    const smile = (bs.mouthSmileLeft + bs.mouthSmileRight) / 2;
+    }
     const frown = (bs.mouthFrownLeft + bs.mouthFrownRight) / 2;
     sig.expr += (rigClamp(smile - frown, -1, 1) - sig.expr) * 0.25;
     const smileB = rigClamp(smile * 1.8, 0, 1);
@@ -1039,8 +1185,9 @@ function processLandmarks(lm, bs, sig, cal, SENS) {
     sig.pucker += (pucker - sig.pucker) * 0.4;
     sig.stretch += (stretch - sig.stretch) * 0.4;
     /* canal do "eee": o smile com zona morta (o meio sorriso de quem fala não conta).
-       Só entra no viseme E, e doseado pelo slider `viseme E` — a 0 não existe. */
-    sig.smileW += (Math.max(0, smile - 0.25) * 1.1 - sig.smileW) * 0.4;
+       Só entra no viseme E, e doseado pelo slider `viseme E` — a 0 não existe.
+       (a v3 já o escreveu à sua maneira, com baseline lenta em vez de zona morta fixa) */
+    if (!v3) sig.smileW += (Math.max(0, smile - 0.25) * 1.1 - sig.smileW) * 0.4;
     sig.mouthW += (rigClamp((stretch - pucker) * 0.8, -0.5, 0.5) - sig.mouthW) * 0.3;
     sig.jawX += (rigClamp((bs.mouthRight - bs.mouthLeft) + (bs.jawRight - bs.jawLeft) * 0.6, -1, 1) - sig.jawX) * 0.35;
     sig.blinkL += (rigClamp(1 - bs.eyeBlinkRight * 1.6 * SENS.blinkGain, 0.02, 1) - sig.blinkL) * 0.5;
@@ -1477,7 +1624,7 @@ function drawModel(ctx, model, sig, SENS, frozen) {
 /* visemeE e closeSpeed nasceram de experiências revertidas (ver "cicatrizes" no README):
    em vez de constantes minhas, são doses do utilizador — a 0/1 são exactamente a cadeia
    validada, e o que os sliders adicionam foi ele que o pôs lá. */
-const SENS_DEFAULTS = { mouthGain: 1, mouthWidth: 1, openHeight: 1, puckerFx: 1, visemeE: 0, closeSpeed: 1, gazeGain: 1, blinkGain: 1, headGain: 1, headMove: 1, sphere: 1, lean: 1, smooth: 1, speechV2: 0 };
+const SENS_DEFAULTS = { mouthGain: 1, mouthWidth: 1, openHeight: 1, puckerFx: 1, visemeE: 0, closeSpeed: 1, gazeGain: 1, blinkGain: 1, headGain: 1, headMove: 1, sphere: 1, lean: 1, smooth: 1, speechV2: 0, speechV3: 0, speechAuto: 0 };
 /* ---------- favoritos (localStorage, partilhados pelas três páginas) ---------- */
 const FAVS_KEY = 'critter-favs';
 const FAVS_MAX = 60;
