@@ -212,6 +212,30 @@ document.getElementById('btn-import').addEventListener('click', () => {
   inp.click();
 });
 
+/* ?diag=1 — escreve no ecrã o que preciso de saber quando o layout falha noutro
+   dispositivo: tamanho real do viewport, se as media queries batem, e onde está o
+   painel. Sem isto, depurar mobile à distância é adivinhar. */
+if (new URLSearchParams(location.search).get('diag')) {
+  const linha = () => {
+    const p = document.querySelector('.panel');
+    const r = p.getBoundingClientRect();
+    const vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
+    const mq = matchMedia('(max-width:700px), (pointer:coarse) and (max-width:1024px)').matches;
+    const dentro = r.bottom <= vh + 1 && r.top >= -1 && r.right <= vw + 1 && r.left >= -1;
+    return 'DIAG vp=' + vw + 'x' + vh + ' dpr=' + (window.devicePixelRatio || 1) +
+      ' coarse=' + (matchMedia('(pointer:coarse)').matches ? 'S' : 'N') +
+      ' mq=' + (mq ? 'S' : 'N') + ' aberto=' + (p.open ? 'S' : 'N') +
+      ' painel=' + [r.left, r.top, r.right, r.bottom].map(Math.round).join(',') +
+      ' dentro=' + (dentro ? 'S' : 'N') + ' vis=' + getComputedStyle(p).visibility +
+      ' disp=' + getComputedStyle(p).display + ' pos=' + getComputedStyle(p).position;
+  };
+  const el = document.getElementById('txt-description');
+  const pinta = () => { el.textContent = linha(); el.style.cssText = 'background:#0a0;color:#fff;padding:6px;font-size:11px;word-break:break-all'; };
+  setTimeout(pinta, 800);
+  document.querySelector('.panel').addEventListener('toggle', () => setTimeout(pinta, 50));
+  window.addEventListener('resize', () => setTimeout(pinta, 100));
+}
+
 document.getElementById('btn-rigged').addEventListener('click', () => { window.location.href = 'rigged.html' + window.location.hash; });
 document.getElementById('btn-reset').addEventListener('click', () => {
   try { localStorage.removeItem('critter-cfg:' + page.id); } catch (e) {}
