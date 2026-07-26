@@ -46,12 +46,29 @@ node verify-bancada.js --com-v3                  # a bancada vale alguma coisa?
 Medir:
 
 ```bash
-node regress.js                          # goldens + asserções da v3   <- correr sempre
+node regress.js                          # goldens + asserções da v3 e do áudio  <- sempre
 node tabela.js v1 v2 v3 --out final      # a tabela + out/final.json
 node tabela.js --hz 30 v1 v3             # à cadência do mobile
 node replay.js <clip> --modo v3          # um clip, para ir ver o que se passa nele
 node gridsearch.js                       # afinação do RIG_V3 (--rapido: grelha grossa)
+
+node replay.js <clip> --modo v3 --audio 0.7 --ruido -55   # com o microfone simulado
 ```
+
+### o microfone na bancada
+
+`--audio <0..1>` injecta o `audio.envDb` do próprio trace no `processLandmarks` pelo mesmo
+parâmetro que ao vivo traz o microfone, alinhado por timestamp. `--ruido <dB>` soma-lhe um
+chão de sala — obrigatório para ter algum sentido, porque o RAVDESS é de estúdio e o
+silêncio dele é *digital* (−120 dB, zeros exactos); sem chão, o gate automático nunca é
+exercitado. −55 dB é um portátil típico.
+
+**A regra que aqui se aplica é diferente das outras: o `r` e o `fecho` não valem.** Ambos
+se medem contra o envelope, e um híbrido alimentado por esse envelope correlaciona-se com
+ele por construção — o `r` sobe de 0.66 para 0.88 e não quer dizer nada. O que a bancada
+pode dizer sobre o híbrido é só isto: o vale entre sílabas, o jitter, a amplitude, o gate
+contra ruído, e se a oclusão do vídeo continua a ganhar. As asserções em `lib/guardas.js`
+(`assercoesAudio`) são exactamente essas, e correm no `regress.js` como as da v3.
 
 O `gridsearch.js` **não escreve no `engine.js`**: grava a vencedora em
 `out/gridsearch.json` e os valores copiam-se à mão para o `RIG_V3`. É de propósito — uma
@@ -95,6 +112,27 @@ qual das versões.
 
 Se a v3 ganhar: promove-se a omissão numa alteração separada, e o select fica para trás.
 Se perder, ou empatar, fica onde está — atrás do select. Empate não promove.
+
+## Guião do A/B do áudio
+
+Independente do anterior: o slider `áudio (mistura mic)` funciona em qualquer das cadeias.
+Pôr em **0.7**, aceitar o microfone (só é pedido quando o slider sai do zero), e comparar
+**0 vs 0.7 vs 1** dentro de cada exercício. No debug (`d`) aparece `+A` e `au`, o nível
+depois do gate.
+
+- **(a) fala corrida, 20 s.** O exercício que decide. O ritmo fica mais colado às sílabas?
+  Se ficar *atrasado*, é o release de 90 ms (`RIG_AUDIO.relMs`) e diz-se.
+- **(b) "pá-pé-pó", "um bom pombo bebe".** Tem de continuar a fechar. Na bancada fecha ao
+  nível do vídeo, mas é aqui que o veto da oclusão se vê ou não se vê.
+- **(c) silêncio com o ruído de fundo da sala, 10 s.** Boca quieta, `au` a 0.00.
+- **(d) falar baixinho.** Onde o tecto adaptativo devia ganhar ao vídeo sozinho.
+- **(e) assobiar e bater palmas.** O assobio contínuo é um tom estacionário e **não deve**
+  abrir a boca; as palmas são transientes com muita energia e **passam o gate** — espera
+  uma abertura curta por palma. É a consequência de um detector de energia não saber o que
+  é voz, não um defeito da implementação. Reportar o que de facto acontece.
+
+Reportar em palavras: **atraso**, **tremor**, **aberturas fantasma**, **boca presa** — em
+qual exercício e em que posição do slider.
 
 Depois disto: 3-5 clips do próprio utilizador a falar português (30-60 s, luz normal, à
 distância a que usa isto de verdade) entram em `clips/user/` e ficam **holdout

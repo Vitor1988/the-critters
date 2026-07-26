@@ -277,14 +277,126 @@ para 3 ms — e é exactamente esse o engodo, porque o que ele faz é seguir a e
 vez da boca. Fica no studio só porque o caso que interessa é o oposto do que estes clips
 têm (fala baixa, cansada, ao fim do dia) e esse só se vê ao vivo.
 
-**Possibilidade futura — lipsync assistido por áudio.** A visão dá a *forma* (visemes) mas
-anda ~100ms atrás do som e falha aberturas pequenas; o volume do microfone (Web Audio,
-`AnalyserNode`) tem latência ~0 e não perde uma sílaba. As ferramentas grandes (VSeeFace,
-Animaze) fundem os dois: áudio para o timing e a energia, visão para a forma da boca. Aqui
-seria um toggle — o microfone já é pedido para gravar, e ficava tudo local como o resto.
-É a ronda seguinte, e agora tem onde ser medida antes de ser escrita: a bancada já alinha
-o envelope do áudio com a timeline da boca, que é precisamente o sinal que a fusão usaria.
-Continua a pedir afinação ao vivo — o headless não sente latência.
+### lipsync híbrido — o slider `áudio` (omissão 0, desligado)
+
+A câmara e o microfone falham em coisas diferentes. **A câmara não sente o ritmo das
+sílabas**: a 30 fps cada frame vale 33 ms, uma sílaba dura 150-200 ms, e o que sai é uma
+boca que acerta na forma e arredonda o compasso. **O microfone não quer saber da luz** —
+tem o ritmo ao milissegundo, mas não distingue um "mmm" de um "ahh" nem sabe sequer se os
+lábios estão juntos. Daí a divisão de trabalho do VTube Studio/VSeeFace, que é a que está
+aqui: **o áudio manda na ABERTURA, o vídeo continua a mandar na FORMA e na OCLUSÃO**.
+
+O slider `áudio (mistura mic)` (grupo *boca*, do studio) é o peso da mistura. A 0 — a
+omissão — nada disto existe: não se pede o microfone, não corre uma linha do caminho novo,
+e a saída é byte-a-byte a de antes (provado abaixo). Funciona nas três cadeias, v1/v2/v3.
+
+**Onde a mistura entra.** Só no alvo de abertura, e antes do filtro final:
+
+```
+alvo = lerp(aberturaVídeo, nívelÁudio, audioMix · veto) · oclusão · pucker
+```
+
+Antes da oclusão, não depois — é isso que garante que uma bilabial fecha a boca por muito
+alto que se esteja a falar. Os visemes de forma (E, A, O, U), o `press` e a largura
+continuam 100% do vídeo: o microfone não escreve um único sinal de forma.
+
+**O microfone é pedido quando o slider sai do zero, nunca no arranque.** É também o gesto
+que o browser exige para abrir um `AudioContext`. Negada a permissão, degrada em silêncio
+para vídeo puro com um aviso na linha de estado. A voltar a 0, larga-se o microfone. A
+página `rigged.html` usa o `audioMix` gravado como qualquer outra sensibilidade, mas espera
+pelo primeiro clique — nunca pede o microfone só por ser aberta. Tudo local, como o resto.
+
+**Do dB ao curso da boca** (`RIG_AUDIO`): RMS do domínio do tempo → dB; chão de ruído
+automático (percentil 10 dos últimos 4 s, com descida imediata e subida travada a 10 dB/s);
+`gate = chão + 8 dB`; tecto adaptativo com o span preso entre 12 e 30 dB; ataque 20 ms,
+descida 90 ms. O tecto é o que faz o mesmo código servir um micro com ganho alto e um
+fraco; o `spanMin` é o que impede o "do 8 para o 80" — em silêncio o tecto não se aproxima
+do gate, portanto o ruído nunca chega a parecer voz.
+
+#### o que a bancada mediu — e o que ela não pode medir
+
+**Aviso de circularidade, primeiro.** A métrica `r` correlaciona a boca com o envelope do
+áudio. Um híbrido *alimentado* por esse envelope infla o `r` por construção: sobe de 0.66
+para 0.88, e esse número não vale nada. Pela mesma razão não vale o `fecho`, que deteta as
+oclusões pelos mínimos do próprio envelope. **Nada disto foi usado para decidir.** O que a
+bancada pode provar são as propriedades que podem partir, e essas foram medidas nos 16
+clips com um chão de ruído de sala injectado (`--ruido`, porque o RAVDESS é de estúdio e o
+silêncio dele é *digital*, −120 dB, coisa que nenhum microfone dá):
+
+| `audioMix` | vale entre sílabas (v1) | jitter (v1) | p95 | p5 |
+|---|---|---|---|---|
+| 0 (vídeo puro) | 0.68 | 0.0355 | 0.828 | 0.000 |
+| 0.7 | 0.63 | 0.0254 | 0.769 | 0.000 |
+| 1 | 0.60 | 0.0290 | 0.816 | 0.000 |
+
+O híbrido **não engorda a boca** (p95 mantém-se, p5 fica em 0), **não treme mais** (o
+jitter baixa ~20%) e **fecha melhor entre sílabas** — este último por construção, porque o
+envelope tem vales mais fundos do que o tracker; o que interessa é que venha sem tremor.
+A amplitude bate certo sozinha: a razão entre o p95 do vídeo e o do áudio tem mediana 0.97
+nos 16 clips, ou seja o tecto adaptativo aterra no mesmo sítio onde o vídeo já estava — não
+foi preciso escalar nada à mão.
+
+Os tempos saíram de um varrimento: a 110 ms o vale fica em 0.66 do pico, a 90 ms em 0.60,
+e o tremor sobe de 0.0272 para 0.0290 — trocou-se um bocado de tremor por vale mais fundo,
+que é o lado certo para o defeito que este projeto tem. O `gamma` ficou em **1.0** por
+medição, não por gosto: abaixo de 1 a boca engorda no meio do intervalo e o vale sobe.
+
+**O gate, isolado** (cara parada, dB sintético): ruído estacionário a −60, −45, −30 e −20 dB
+não abre a boca **nada** (máximo 0.0000). Um tom constante alto também não — para o gate,
+constante *é* ruído, por muito que seja. Um degrau de ruído (o ar condicionado a arrancar)
+abre a boca e leva **~5 s** a fechar enquanto o chão sobe; era 9 s antes de o limite de
+subida passar de 3 para 10 dB/s, e em 40 s de fala contínua o chão assenta no mesmo sítio
+com 3 ou com 25 dB/s — quem manda no regime permanente é o percentil.
+
+**O que a bancada apanhou, e é a razão de haver um veto.** Com a mistura no máximo e sem
+veto, uma bilabial abria a boca a **0.43** (o vídeo sozinho fecha-a a 0.046) e uma selada a
+**0.47** (a v3 fecha-a a 0.000). É o modo de falha de qualquer lipsync só de áudio: o "m"
+de "mãe" tem tanta energia como o "ã". O veto (`rigAudioVeto`) tira peso ao microfone à
+medida que a oclusão do vídeo sobe, e a zero autoriza-o completamente. As fronteiras (0.30
+a 0.62) foram medidas e não adivinhadas: **a falar, a oclusão fica em 0.05 de mediana e
+nunca passa de 0.20**, portanto o veto não toca num único frame de fala normal. Com ele, a
+bilabial volta a 0.046 — exactamente o vídeo — e a selada da v3 a 0.044.
+
+**O lag não é mensurável neste material.** O envelope aparece 342 ms *depois* da abertura
+crua do vídeo (mediana, saturando a janela de procura), porque os actores do RAVDESS abrem
+a boca antes de emitir som — está registado na `replay.js` desde a ronda anterior. Contra
+este material, um número de lag diria mais sobre a declamação deles do que sobre o código.
+**Que o ritmo fica mais colado às sílabas é a intenção do desenho, não um resultado
+medido** — é exactamente o que o A/B ao vivo tem de decidir.
+
+#### guião de A/B do áudio
+
+No studio, `d` liga o debug (`+A` e `au` = nível depois do gate; a 0.00 com voz a sair, ou
+o chão ainda não assentou ou o gate está a cortar). Põe o slider `áudio` em **0.7**, aceita
+o microfone, e compara **0 vs 0.7 vs 1** em cada exercício:
+
+1. **fala corrida, 20 s.** É o exercício que decide. O ritmo deve ficar visivelmente mais
+   colado às sílabas; se ficar *atrasado*, é o release de 90 ms e diz-se
+2. **"pá-pé-pó", "um bom pombo bebe".** Tem de continuar a fechar. Na bancada fecha ao
+   nível do vídeo, mas é aqui que o veto se vê ou não se vê
+3. **silêncio com o ruído de fundo da sala, 10 s.** Boca quieta. O `au` deve ficar a 0.00
+4. **falar baixinho.** É onde o tecto adaptativo devia ganhar ao vídeo sozinho
+5. **assobiar** — um assobio contínuo é um tom estacionário e **não deve abrir a boca**;
+   **bater palmas** é o oposto, um transiente com muita energia, e **passa o gate**: espera
+   uma abertura curta a cada palma. Não é defeito, é a consequência de um detector de
+   energia não saber o que é voz
+6. **queixo caído de boca fechada.** Na v1 abre a 0.46 com ou sem microfone (defeito antigo
+   da v1, que a v2 corrige); na v3 fica em 0.04
+
+#### limitações honestas
+
+- **o gate é de energia, não de voz.** Palmas, uma porta a bater, uma tosse ou música com
+  percussão passam. Um detector de voz a sério (bandas de formantes, ou um VAD) é outra
+  ronda
+- **ruído doméstico não-estacionário** — televisão, conversa noutra divisão — sobe o chão
+  devagar e entretanto mexe a boca. Ruído *estacionário* (ventoinha, frigorífico) é o caso
+  fácil e esse está resolvido
+- **echo das colunas.** Pediu-se `echoCancellation`, o que ajuda; com colunas altas e
+  microfone aberto, o avatar responde ao que sai delas. Auscultadores resolvem
+- **o ganho automático fica desligado** de propósito (normalizava a dinâmica, que é o
+  sinal). Nem todos os dispositivos respeitam o pedido
+- **os números acima são de dois actores americanos a declamar duas frases**, com um chão de
+  ruído *simulado*. O material não tem uma única bilabial gravada numa sala a sério
 
 ### visemes — como toda a boca abre
 
