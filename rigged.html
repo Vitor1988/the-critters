@@ -28,7 +28,8 @@ button.rec-on{background:#c0261e}
   .description{font-size:12px;margin-top:8px;line-height:1.4}
   .navigation{margin-top:10px}
   button{padding:10px 12px;font-size:12px;margin-right:6px;margin-bottom:6px}
-  #cam{width:104px;right:10px;bottom:10px}
+  #cam{width:96px;right:10px;bottom:10px}
+  @supports (padding:env(safe-area-inset-bottom)){ #cam{bottom:calc(10px + env(safe-area-inset-bottom))} }
 }
 </style>
 </head>

@@ -25,6 +25,19 @@ function startRigPage(opts) {
 
   const api = { model: null, rig: null, pal: null, id: '', SENS: Object.assign({}, SENS_DEFAULTS), loadCritter, setStatus };
 
+  /* um erro de JS aqui deixava a página a dizer "loading face tracker…" para sempre, sem
+     pista nenhuma — e num telemóvel não há consola à mão. Passa a aparecer no ecrã. */
+  function mostrarErro(msg) {
+    try {
+      descEl.textContent = '⚠ ' + msg;
+      descEl.style.background = '#c0261e';
+      descEl.style.color = '#fff';
+      descEl.style.padding = '6px 8px';
+    } catch (e) {}
+  }
+  window.addEventListener('error', e => mostrarErro((e.message || 'erro') + ' @ ' + (e.filename || '').split('/').pop() + ':' + (e.lineno || '?')));
+  window.addEventListener('unhandledrejection', e => mostrarErro('promessa rejeitada: ' + ((e.reason && e.reason.message) || e.reason)));
+
   function luminance(hex) {
     const r = parseInt(hex.substr(1, 2), 16), g = parseInt(hex.substr(3, 2), 16), b = parseInt(hex.substr(5, 2), 16);
     return (299 * r + 587 * g + 114 * b) / 1000;
