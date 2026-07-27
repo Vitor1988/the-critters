@@ -17,7 +17,8 @@ const fs = require('fs');
 const path = require('path');
 const { loadEngine } = require('./lib/shim');
 const { mkLm, mkBs, fresh } = require('./lib/fixtures');
-const { POSE, corre: corre0, vale, assercoesV3, assercoesAudio } = require('./lib/guardas');
+const { POSE, corre: corre0, vale, assercoesV3, assercoesAudio,
+  assercoesVisemes, assercoesMaximo } = require('./lib/guardas');
 
 const GOLDENS = path.join(__dirname, 'goldens.json');
 const eng = loadEngine();
@@ -208,5 +209,7 @@ function bateria(titulo, r, semNada) {
 
 bateria('assercoes da v3:', verificaV3(), 'v3 ainda nao existe no engine — assercoes saltadas');
 bateria('assercoes do audio:', assercoesAudio(eng), 'audioMix ainda nao existe no engine — assercoes saltadas');
+bateria('assercoes dos visemes por audio:', assercoesVisemes(eng), 'audioVisemes ainda nao existe no engine — assercoes saltadas');
+bateria('assercoes do maximo pessoal:', assercoesMaximo(eng), 'maxJaw ainda nao existe no engine — assercoes saltadas');
 
 if (falhou) { console.error(falhou + ' de ' + total + ' assercao(oes) falharam'); process.exit(1); }

@@ -106,21 +106,27 @@ function assercoesV3(eng) {
    O `dt` fica por passar, tal como no `corre` sem microfone — assim a comparacao de
    neutralidade isola mesmo o audio (a v3 filtra em ms, e 16.666 vs o 16.7 por omissao
    ja chegava para as duas series divergirem por razoes que nada tem a ver com isto). */
-function correAu(eng, S, seq, dbDe) {
+function correAu(eng, S, seq, dbDe, bandasDe) {
   const { sig, cal } = fresh(eng, S);
   const au = { db: dbDe(0), conf: 1 };
-  const serie = [], nivel = [];
+  if (bandasDe) au.bandas = bandasDe(0);
+  const serie = [], nivel = [], round = [], spread = [], pesoO = [], pesoE = [];
   let i = 0;
   for (const [nome, n] of seq) {
     const [gap, bs] = POSE[nome];
     for (let k = 0; k < n; k++, i++) {
       au.db = dbDe(i);
+      if (bandasDe) au.bandas = bandasDe(i);
       eng.processLandmarks(mkLm(gap), mkBs(bs), sig, cal, S, undefined, au);
       serie.push(sig.mouth);
       nivel.push(sig.au ? sig.au.lvl : 0);
+      round.push(sig.au ? sig.au.round : 0);
+      spread.push(sig.au ? sig.au.spread : 0);
+      const w = eng.rigVisemeWeights(sig, S);
+      pesoO.push(w.O); pesoE.push(w.E);
     }
   }
-  return { sig, serie, nivel };
+  return { sig, serie, nivel, round, spread, pesoO, pesoE };
 }
 
 /* ruido estacionario com o tremor de uma sala; semente fixa = replay determinstico */
@@ -225,9 +231,170 @@ function assercoesAudio(eng) {
   return { saltado: false, linhas };
 }
 
+/* ---------------------------------------------------------------------------
+   Assercoes dos visemes por audio (`audioVisemes`).
+
+   Espectros sinteticos, e nao clips: o que se testa aqui e a DIRECCAO da derivacao
+   (energia em baixo -> O/U, energia em cima -> E/I) e as propriedades que podem
+   partir. A qualidade fonetica nao se testa aqui nem em lado nenhum desta bancada —
+   os clips do RAVDESS nao tem alinhamento e a prova e o A/B ao vivo.
+
+   Os envelopes TEM de ser silabicos: um som constante, por muito alto que seja, e
+   ruido para o gate (ver `assercoesAudio`), portanto uma "vogal sustentada" a nivel
+   fixo nao chegaria sequer a passar o gate.
+   --------------------------------------------------------------------------- */
+/* perfis em dB por banda [50-200, 200-400, 400-800, 800-1500, 1500-2500, 2500-4000, 4000-8000] */
+const ESPECTRO = {
+  /* fala "media", a queda de ~6 dB/oitava que a voz tem */
+  neutro: [-30, -32, -36, -42, -48, -54, -60],
+  /* "ooo"/"uuu": tudo em baixo, os agudos desabam */
+  escuro: [-28, -30, -34, -50, -66, -72, -78],
+  /* "eee"/"iii": F2 la em cima, e o pico ja nao esta nas graves */
+  claro: [-34, -38, -44, -44, -38, -40, -50]
+};
+
+function assercoesVisemes(eng) {
+  if (!('audioVisemes' in eng.SENS_DEFAULTS)) return { saltado: true, linhas: [] };
+  const S = o => Object.assign({}, eng.SENS_DEFAULTS, o);
+  const linhas = [];
+  const teste = (nome, ok, detalhe) => linhas.push({ nome, ok, detalhe });
+  const num = o => { const r = {}; for (const k of Object.keys(o).sort()) if (typeof o[k] === 'number') r[k] = o[k]; return r; };
+  const mx = a => Math.max.apply(null, a);
+
+  /* 1. NEUTRALIDADE: com a dose a 0, passar o espectro tem de dar o mesmo bit a bit */
+  const SEQ = [['repouso', 10], ['vogal', 12], ['fecho', 8], ['vogal', 12], ['bilabial', 8], ['repouso', 10]];
+  const fala = fazFala(-25, -45);
+  const bandasFixas = () => ESPECTRO.claro;
+  for (const [tag, o] of [['v1', {}], ['v3', { speechV3: 1 }]]) {
+    const sem = corre(eng, S(o), SEQ).sig;
+    const com = correAu(eng, S(o), SEQ, fala, bandasFixas).sig;
+    const a = JSON.stringify(num(sem)), b = JSON.stringify(num(com));
+    teste('audioVisemes 0 ignora o espectro (' + tag + ')', a === b,
+      a === b ? 'identico bit a bit' : 'DIFERE: ' + a.slice(0, 80) + ' vs ' + b.slice(0, 80));
+  }
+
+  /* 2. O AUDIO NAO ESCREVE ABERTURA. E a fronteira que separa esta feature do
+        `audioMix`: com a dose no maximo, o `sig.mouth` tem de ficar EXACTAMENTE
+        onde estava — o espectro so mexe na forma. */
+  for (const [tag, o] of [['v1', {}], ['v3', { speechV3: 1 }]]) {
+    const sem = correAu(eng, S(o), SEQ, fala).serie;
+    const com = correAu(eng, S(Object.assign({ audioVisemes: 1 }, o)), SEQ, fala, bandasFixas).serie;
+    let d = 0;
+    for (let i = 0; i < sem.length; i++) d = Math.max(d, Math.abs(sem[i] - com[i]));
+    teste('a forma nao toca na abertura (' + tag + ')', d === 0, 'max |dmouth| = ' + d);
+  }
+
+  /* aquecimento + segmento de teste, com o espectro a mudar a meio */
+  const AQ = 200;                       /* ~3.3 s: o gate assenta e a baseline aquece */
+  const correForma = perfil => {
+    const seq = [['repouso', 120], ['vogal', AQ], ['vogal', 120]];
+    const bandas = i => (i < 120 + AQ ? ESPECTRO.neutro : ESPECTRO[perfil]);
+    return correAu(eng, S({ audioVisemes: 1 }), seq, fazFala(-25, -45, 120), bandas);
+  };
+  const fim = o => ({ r: mx(o.round.slice(-100)), s: mx(o.spread.slice(-100)),
+    wO: mx(o.pesoO.slice(-100)), wE: mx(o.pesoE.slice(-100)) });
+
+  /* 3. DIRECCAO: graves -> O/U e nao E; agudos -> o inverso */
+  const esc = fim(correForma('escuro'));
+  teste('espectro grave sobe o O/U e nao o E', esc.r > 0.5 && esc.s < 0.05,
+    'round ' + esc.r.toFixed(2) + ' (>0.5) spread ' + esc.s.toFixed(2) + ' (<0.05), peso O ' + esc.wO.toFixed(2));
+  const cla = fim(correForma('claro'));
+  teste('espectro agudo sobe o E/I e nao o O', cla.s > 0.5 && cla.r < 0.05,
+    'spread ' + cla.s.toFixed(2) + ' (>0.5) round ' + cla.r.toFixed(2) + ' (<0.05), peso E ' + cla.wE.toFixed(2));
+
+  /* 4. NEUTRO NAO PEDE FORMA NENHUMA: a fala media e a baseline, e a baseline nao e
+        uma careta — e o que impede a boca de andar sempre a fazer bicos */
+  const neu = fim(correForma('neutro'));
+  teste('espectro medio nao inventa forma', neu.r < 0.15 && neu.s < 0.15,
+    'round ' + neu.r.toFixed(2) + ' spread ' + neu.s.toFixed(2) + ' (<0.15)');
+
+  /* 5. SILENCIO: microfone mudo, seja qual for o espectro que venha atras */
+  {
+    const o = correAu(eng, S({ audioVisemes: 1 }), [['repouso', 400]], () => -100, () => ESPECTRO.claro);
+    const s = o.spread.slice(100), r = o.round.slice(100);
+    teste('silencio nao da forma nenhuma', mx(s) < 0.01 && mx(r) < 0.01,
+      'round max ' + mx(r).toFixed(4) + ' spread max ' + mx(s).toFixed(4));
+  }
+
+  /* 6. ARRANQUE: nos primeiros ~1.2 s de voz a baseline ainda nao sabe o que e esta
+        voz, e por isso nao se afirma forma nenhuma. Sem esta guarda o primeiro som
+        depois de ligar o microfone definia a baseline e prendia a boca numa pose. */
+  {
+    const o = correAu(eng, S({ audioVisemes: 1 }), [['repouso', 120], ['vogal', 60]],
+      fazFala(-25, -45, 120), () => ESPECTRO.escuro);
+    const cedo = Math.max(mx(o.round.slice(120, 160)), mx(o.spread.slice(120, 160)));
+    teste('nao afirma forma antes de aquecer', cedo < 0.15,
+      'maior canal nos primeiros ~0.7 s de voz: ' + cedo.toFixed(3) + ' (<0.15)');
+  }
+
+  /* 7. VOGAL LONGA NAO SE APAGA: a baseline anda devagar de proposito, senao um
+        "ooooo" de 2 s desaparecia a meio (e e um dos exercicios do A/B) */
+  {
+    const seq = [['repouso', 120], ['vogal', AQ], ['vogal', 120]];
+    const bandas = i => (i < 120 + AQ ? ESPECTRO.neutro : ESPECTRO.escuro);
+    const o = correAu(eng, S({ audioVisemes: 1 }), seq, fazFala(-25, -45, 120), bandas);
+    const cedo = mx(o.round.slice(120 + AQ, 120 + AQ + 30));      /* primeiro 0.5 s */
+    const tarde = mx(o.round.slice(-30));                          /* 2 s depois */
+    teste('vogal longa nao se apaga', tarde > 0.6 * cedo,
+      'round ' + cedo.toFixed(2) + ' -> ' + tarde.toFixed(2) + ' ao fim de 2 s (>60%)');
+  }
+
+  return { saltado: false, linhas };
+}
+
+/* ---------------------------------------------------------------------------
+   Assercoes da calibracao de maximo (`maxJaw`/`maxLip`).
+
+   O que se prova aqui e o contrato, nao a qualidade: sem calibracao nada muda; com
+   ela o span move-se no sentido certo; e as guardas (media geometrica, chao e tecto)
+   limitam o estrago de uma medicao ma. A qualidade mediu-se nos 16 clips, esta no
+   README, e a decisao e do A/B.
+   --------------------------------------------------------------------------- */
+function assercoesMaximo(eng) {
+  if (!('maxJaw' in eng.SENS_DEFAULTS)) return { saltado: true, linhas: [] };
+  const S = o => Object.assign({}, eng.SENS_DEFAULTS, o);
+  const linhas = [];
+  const teste = (nome, ok, detalhe) => linhas.push({ nome, ok, detalhe });
+  const num = o => { const r = {}; for (const k of Object.keys(o).sort()) if (typeof o[k] === 'number') r[k] = o[k]; return r; };
+  /* o neutro das poses sinteticas: `repouso` tem jawOpen 0.05 e gap 0.002 */
+  const boca = (o, pose) => corre(eng, S(o), [[pose || 'vogal', 40]]).sig.mouth;
+
+  for (const [tag, o] of [['v1', {}], ['v3', { speechV3: 1 }]]) {
+    /* 1. NEUTRALIDADE: sem maximo, o span e o fixo e o sig e o mesmo bit a bit */
+    const a = JSON.stringify(num(corre(eng, S(o), [['vogal', 40]]).sig));
+    const b = JSON.stringify(num(corre(eng, S(Object.assign({ maxJaw: 0, maxLip: 0 }, o)), [['vogal', 40]]).sig));
+    teste('sem maximo o span e o fixo (' + tag + ')', a === b, a === b ? 'identico bit a bit' : 'DIFERE');
+
+    /* 2. SENTIDO: um curso pessoal LARGO contem a boca, um curto solta-a. E o que o
+          botao faz, e a direccao depende da pessoa — nao ha aqui um "melhor". */
+    const base = boca(o);
+    const largo = boca(Object.assign({ maxJaw: 0.9, maxLip: 0.2 }, o));
+    const curto = boca(Object.assign({ maxJaw: 0.2, maxLip: 0.04 }, o));
+    teste('curso largo contem a boca (' + tag + ')', largo < base,
+      'vogal ' + base.toFixed(3) + ' -> ' + largo.toFixed(3));
+    teste('curso curto solta a boca (' + tag + ')', curto > base,
+      'vogal ' + base.toFixed(3) + ' -> ' + curto.toFixed(3));
+
+    /* 3. GUARDAS: uma medicao absurda (a pessoa nao abriu a boca, ou o tracker
+          disparou) nao pode multiplicar a boca. O chao de 0.55x do span limita o
+          ganho a 1/0.55 = 1.8x no pior caso, e a media geometrica ja tinha comido
+          metade da distancia antes disso. */
+    const absurdo = boca(Object.assign({ maxJaw: 0.055, maxLip: 0.011 }, o));
+    teste('medicao absurda fica presa pelas guardas (' + tag + ')', absurdo <= Math.min(1, base * 1.85),
+      'vogal ' + base.toFixed(3) + ' -> ' + absurdo.toFixed(3) + ' (<= ' + Math.min(1, base * 1.85).toFixed(3) + ')');
+
+    /* 4. A SELADA CONTINUA SELADA: o span mexe na escala, nao na oclusao */
+    const sel = corre(eng, S(Object.assign({ maxJaw: 0.2, maxLip: 0.04 }, o)), [['bilabial', 40]]).sig.mouth;
+    teste('bilabial fecha com span pessoal (' + tag + ')', sel < 0.12,
+      'mouth ' + sel.toFixed(3) + ' (<0.12)');
+  }
+  return { saltado: false, linhas };
+}
+
 const passaTudo = eng => {
   const a = assercoesV3(eng);
   return a.saltado ? true : a.linhas.every(l => l.ok);
 };
 
-module.exports = { POSE, passo, corre, vale, assercoesV3, assercoesAudio, passaTudo };
+module.exports = { POSE, ESPECTRO, passo, corre, vale, assercoesV3, assercoesAudio,
+  assercoesVisemes, assercoesMaximo, passaTudo };
