@@ -1237,6 +1237,41 @@ function rigAudioShape(sig, bandas, nivel, dt) {
   a.round += (alvoR - a.round) * rigEmaA(dt, alvoR > a.round ? K.atkMs : K.relMs);
 }
 
+/* --------------------------------------------------------------------------
+   calibração de máximo — EXPERIMENTAL, atrás dos `maxJaw`/`maxLip` (omissão 0 =
+   não existe, e o `rigSpan` devolve o span fixo de sempre, o mesmo double).
+
+   O `RIG_JAW_SPAN`/`RIG_LIP_SPAN` é um palpite sobre a população: a janela de
+   entrada que corresponde ao curso todo da boca do avatar. O botão `calibrar
+   máximo` mede o curso REAL de quem está à frente da câmara (p95 de uns 40 frames
+   de "AAA") e substitui o palpite por ele.
+
+   Duas guardas, e a razão de existirem está no README: auto-range pelo pico
+   recente já foi tentado e deu "do 8 para o 80". Isto não é auto-range — é uma
+   medição única, deliberada, que não se mexe sozinha — mas uma medição má (a
+   pessoa não abriu a boca, o tracker perdeu-a, a luz mudou) tem de custar pouco:
+
+   · **média geométrica com o fixo**: anda metade da distância em log. Um máximo
+     medido a metade do fixo dá um span a 0.71 do fixo, não a 0.5.
+   · **chão e tecto**: nunca menos de 0.55x nem mais de 1.8x o fixo, aconteça o que
+     acontecer à medição.
+
+   Nos dois actores da bancada o curso real do queixo é 0.41 e 0.48 (o fixo é 0.42,
+   bom palpite) mas o dos lábios é 0.108 e 0.118 contra os 0.085 fixos — 26 a 39%
+   acima. Ou seja: a direcção do efeito depende da pessoa, e é isso que o botão
+   resolve. Quem tiver o curso curto ganha boca; quem o tiver longo perde
+   saturação. Qual dos dois é o caso dele só o A/B ao vivo diz.
+   -------------------------------------------------------------------------- */
+const RIG_MAX = { chao: 0.55, teto: 1.8 };
+
+function rigSpan(fixo, maximo, neutro) {
+  /* sem calibração de máximo devolve o MESMO double: o caminho de sempre, bit a bit */
+  if (!(maximo > 0)) return fixo;
+  const medido = maximo - (neutro || 0);
+  if (!(medido > 0)) return fixo;
+  return rigClamp(Math.sqrt(fixo * medido), fixo * RIG_MAX.chao, fixo * RIG_MAX.teto);
+}
+
 /* escreve sig.mouth, sig.press e sig.smileW — o resto do bloco é partilhado com a v1 */
 function rigSpeechV3(bs, sig, calib, SENS, dt, pucker, smile, mouthR, auMix, auAlvo) {
   const K = RIG_V3;
@@ -1250,8 +1285,8 @@ function rigSpeechV3(bs, sig, calib, SENS, dt, pucker, smile, mouthR, auMix, auA
   /* abertura pelo blendshape, com o mouthClose descontado no sítio certo, e pelos
      landmarks — fica a maior, como na v1: um apanha o que o outro falha */
   const base = (calib.jaw || 0) - K.k * (calib.close || 0);
-  const apBS = (jf - K.k * cf - base - 0.02) / RIG_JAW_SPAN;
-  const apLM = (mouthR - calib.mouth - 0.004) / RIG_LIP_SPAN;
+  const apBS = (jf - K.k * cf - base - 0.02) / rigSpan(RIG_JAW_SPAN, SENS.maxJaw, calib.jaw);
+  const apLM = (mouthR - calib.mouth - 0.004) / rigSpan(RIG_LIP_SPAN, SENS.maxLip, calib.mouth);
   let ap = rigClamp(Math.max(apBS, apLM), 0, 1);
 
   /* auto-range (só com `speechAuto`): normaliza pelo curso que esta pessoa usa de
@@ -1412,9 +1447,11 @@ function processLandmarks(lm, bs, sig, cal, SENS, dtMs, au) {
        teto na abertura (~82% com press 0.3) que nenhum mouth gain fura — é isso que a
        v2 liberta; as seladas continuam a fechar porque a distância entre lábios manda. */
     const v2 = SENS.speechV2 > 0;
-    const openBS0 = (bs.jawOpen - (calib.jaw || 0) - 0.02) / RIG_JAW_SPAN;
+    /* o span é o fixo enquanto não houver calibração de máximo — literalmente o
+       mesmo número, e é o que os goldens provam */
+    const openBS0 = (bs.jawOpen - (calib.jaw || 0) - 0.02) / rigSpan(RIG_JAW_SPAN, SENS.maxJaw, calib.jaw);
     const openBS = v2 ? openBS0 * Math.max(0, 1 - 1.1 * press) : openBS0;
-    const openLM = (mouthR - calib.mouth - 0.004) / RIG_LIP_SPAN;
+    const openLM = (mouthR - calib.mouth - 0.004) / rigSpan(RIG_LIP_SPAN, SENS.maxLip, calib.mouth);
     /* a mistura do microfone entra antes da trava do press e do pucker, pelas mesmas
        razões da v3, e com o mesmo veto — aqui a oclusão é o `press`, que é o único
        sinal de lábios colados que esta cadeia tem */
@@ -1886,9 +1923,11 @@ function drawModel(ctx, model, sig, SENS, frozen) {
 /* visemeE e closeSpeed nasceram de experiências revertidas (ver "cicatrizes" no README):
    em vez de constantes minhas, são doses do utilizador — a 0/1 são exactamente a cadeia
    validada, e o que os sliders adicionam foi ele que o pôs lá. */
-/* `audioVisemes` entra com omissão neutra: a 0 é exactamente a cadeia de antes — nem
-   se lê o espectro. */
-const SENS_DEFAULTS = { mouthGain: 1, mouthWidth: 1, openHeight: 1, puckerFx: 1, visemeE: 0, closeSpeed: 1, gazeGain: 1, blinkGain: 1, headGain: 1, headMove: 1, sphere: 1, lean: 1, smooth: 1, speechV2: 0, speechV3: 0, speechAuto: 0, audioMix: 0, audioVisemes: 0 };
+/* `audioVisemes` e o par `maxJaw`/`maxLip` entram com omissão neutra: a 0 são
+   exactamente a cadeia de antes — o primeiro nem lê o espectro, o segundo devolve o
+   span fixo. `maxJaw`/`maxLip` não são sliders: são a medição do botão `calibrar
+   máximo`, e vivem aqui porque são da cara de quem usa, como as outras. */
+const SENS_DEFAULTS = { mouthGain: 1, mouthWidth: 1, openHeight: 1, puckerFx: 1, visemeE: 0, closeSpeed: 1, gazeGain: 1, blinkGain: 1, headGain: 1, headMove: 1, sphere: 1, lean: 1, smooth: 1, speechV2: 0, speechV3: 0, speechAuto: 0, audioMix: 0, audioVisemes: 0, maxJaw: 0, maxLip: 0 };
 /* ---------- favoritos (localStorage, partilhados pelas três páginas) ---------- */
 const FAVS_KEY = 'critter-favs';
 const FAVS_MAX = 60;
@@ -1920,10 +1959,32 @@ function saveGlobalSens(sens) {
   try { localStorage.setItem(SENS_KEY, JSON.stringify(sens)); } catch (e) {}
   syncTouch();
 }
+/* ---------- máximo pessoal da boca (botão `calibrar máximo`) ----------
+   O curso real da boca desta pessoa nesta câmara, medido uma vez. Fica numa chave
+   própria e NÃO entra no exportar/importar nem na sincronização: as sensibilidades
+   viajam bem entre dispositivos, uma medição feita nesta câmara não — no telemóvel a
+   distância e a lente são outras, e o número certo lá é outro. */
+const RIGMAX_KEY = 'critter-rigmax';
+
+function loadRigMax() {
+  try { const o = JSON.parse(localStorage.getItem(RIGMAX_KEY)); return o && typeof o === 'object' ? o : null; }
+  catch (e) { return null; }
+}
+function saveRigMax(o) {
+  try { if (o) localStorage.setItem(RIGMAX_KEY, JSON.stringify(o)); else localStorage.removeItem(RIGMAX_KEY); }
+  catch (e) {}
+}
+
 /* as do avatar, se existirem, ganham à base global */
 function resolveSens(id) {
   const cfg = loadCritterCfg(id);
-  return Object.assign(loadGlobalSens(), cfg.sens || {});
+  const s = Object.assign(loadGlobalSens(), cfg.sens || {});
+  /* o máximo é da cara e da câmara, nunca do avatar: entra sempre por cima, portanto
+     uma afinação "só deste avatar" não o pode capturar por engano */
+  const m = loadRigMax();
+  s.maxJaw = m && m.jaw > 0 ? m.jaw : 0;
+  s.maxLip = m && m.lip > 0 ? m.lip : 0;
+  return s;
 }
 
 /* ---------- exportar / importar tudo ---------- */
