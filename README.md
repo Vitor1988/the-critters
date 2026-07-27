@@ -398,6 +398,168 @@ o microfone, e compara **0 vs 0.7 vs 1** em cada exercício:
 - **os números acima são de dois actores americanos a declamar duas frases**, com um chão de
   ruído *simulado*. O material não tem uma única bilabial gravada numa sala a sério
 
+### visemes por áudio — o slider `áudio nas vogais` (omissão 0, desligado)
+
+O híbrido de cima deu ao microfone a **abertura** e deixou a **forma** inteirinha ao
+vídeo. Esta é a outra metade: com dose acima de zero, o espectro da voz passa a poder
+dizer que a boca está **redonda** (`ooo`, `uuu`) ou em **fenda** (`eee`, `iii`). É
+independente do slider `áudio` — doses separadas, A/B separado — e a **abertura e a
+oclusão continuam exactamente onde estavam**: medido nos 16 clips, o `sig.mouth` sai
+**bit a bit igual** com a dose a 0 ou a 1.
+
+**Onde entra**: nas *entradas* do solver de visemes (`rigVisemeWeights`), no mesmo sítio
+por onde o pucker e o stretch do vídeo já entravam, e por `max` — o vídeo continua a
+mandar quando viu a forma, o áudio só acrescenta quando a cara não deu sinal. Não toca
+nas poses (`RIG_VISEMES`), nem na abertura, nem na oclusão M/B/P.
+
+**Como se lê uma forma num espectro sem fingir fonética.** Sete bandas grosseiras
+(50-200, 200-400, … 4000-8000 Hz, a mesma repartição do wawa-lipsync) reduzidas a **um
+eixo: o brilho** — quanta energia está em cima face a baixo. Duas medidas independentes
+votam nele:
+
+- **tilt**, a diferença em dB entre 1.5-4 kHz e 200-800 Hz;
+- **centroide** espectral, em oitavas.
+
+Nos clips da bancada correlacionam-se só a **r = 0.39** — não são a mesma medida, e é
+por isso que entram as duas. O peso de **10 dB por oitava** que as põe na mesma escala
+não é gosto: é a razão entre os desvios-padrão delas na fala real (9.58 dB / 0.951
+oitavas = 10.1). Com o centroide fora, o eixo perde metade da amplitude do lado claro
+(p95 do desvio cai de +19.9 para +9.3 dB) e o canal das fendas praticamente não acende.
+
+**Nada disto tem limiares absolutos de Hz, e é o essencial.** Os formantes mudam com a
+pessoa, com o microfone e com a distância: nos 16 clips o brilho médio varia **9 dB
+entre clips**, tanto quanto varia *dentro* de cada um. Um limiar fixo servia uma voz e
+falhava a seguinte. O que se compara é com a **média desta voz** — um seguidor de
+mediana lento (passo fixo, 0.8 dB/s, robusto aos 20 dB de um "sss" que arrastariam uma
+média) guarda o brilho habitual de quem fala, e os canais medem o desvio em dB face a
+ele. As rampas são **assimétricas** porque a distribuição o é: o desvio tem p5 −8.0 dB
+e p95 +19.9 dB (a cauda clara é o dobro, porque um sibilante sobe 20 dB e não há nada
+que desça outro tanto). Ficaram em −4/−10 dB para o redondo e +7/+18 para a fenda —
+escolhidas para os dois canais acenderem a mesma fracção do tempo.
+
+**O arranque tem trava própria, e foi a bancada que a exigiu.** Sem ela, o primeiro som
+depois de ligar o microfone define a baseline e tudo o que vem a seguir parece escuro:
+nos clips do RAVDESS, que começam todos por uma plosiva, a boca ficava presa num "O" em
+61-64% dos frames dos clips mais altos. Enquanto a baseline não tiver ouvido ~1.2 s de
+voz não se afirma forma nenhuma (e ao dobro disso conta por inteiro) — a mesma
+disciplina do chão de ruído, que também não deixa o microfone mandar antes de saber o
+que é silêncio.
+
+#### o que a bancada mediu — e o que ela não consegue medir
+
+Os traces ganharam `audio.bandas` (7 log-energias a 100 Hz, do mesmo clip;
+`capture.py --so-audio` recalcula-as sem re-correr o tracker) e o `replay.js --visemes`
+injecta-as pelo mesmo parâmetro que ao vivo traz a AnalyserNode.
+
+| medido | resultado |
+|---|---|
+| a forma toca na abertura? | **não**: o maior desvio do `sig.mouth` é **0** nos 16 clips, dose 0 vs 0.7 |
+| flicker de forma | **0.37** mudanças de estado por segundo (uma por grupo silábico) |
+| quanto tempo pede forma | **78%** dos frames com voz não pedem forma nenhuma |
+| equilíbrio dos canais | redondo activo 3%, fenda 6% — nenhum domina |
+| peso nos visemes (p95) | O 0.20 · U 0.06 · E 0.10, contra A 0.44 — secundário, como devia |
+| vogal longa apaga-se? | o canal cai de 0.99 para **0.83** ao fim de 2 s |
+
+Os números da tabela são de um **stream contínuo** dos 16 clips seguidos (~59 s), e não
+dos clips um a um: em 4 segundos não há tempo para a baseline assentar, e por isso um
+clip isolado, com a trava de arranque, não produz forma nenhuma. É o mesmo que dizer que
+**a bancada não pode escolher as constantes de tempo da baseline** — 0.8 dB/s e os 5 s
+de aquecimento saíram do compromisso medido nos sintéticos (uma vogal de 2 s tem de
+sobreviver; um arranque de 1 s tem de convergir), não de uma grelha. Se ao vivo um dos
+canais ficar preso, é aí que se olha primeiro.
+
+E o que a bancada **não** conseguiu medir, dito às claras:
+
+- **não há validação fonética.** Tentou-se: as duas frases do RAVDESS são "**Kids** are
+  talking by the door" e "**Dogs** are sitting by the door", ou seja uma começa numa
+  vogal de fenda e a outra numa redonda. Medido no núcleo da primeira vogal, o contraste
+  entre as duas frases é de **−0.06** na diferença dos canais — ou seja, nada, e com o
+  sinal trocado. O ataque de cada frase é uma plosiva (/k/, /d/) que domina a janela, e
+  sem alinhamento forçado não há como isolar a vogal. **Não se finge que este material
+  prova precisão fonética: não prova.**
+- **um "sss" lê-se como fenda.** Não é bem um defeito — um /s/ faz-se de boca esticada e
+  quase fechada —, mas é o mesmo detector a responder a consoantes e a vogais.
+- **é um espectro, não um reconhecedor de vogais.** Um "ó" e um "ô" são o mesmo brilho;
+  o que ele distingue é claro de escuro.
+
+#### guião de A/B dos visemes por áudio
+
+`áudio nas vogais` em **0.7**, aceitar o microfone. No debug (`d`) aparece `fo R.. S..`
+— os dois canais. Ambos a 0.00 com voz a sair quer dizer que a baseline ainda está a
+aquecer (~2 s) ou que o som não se afasta o suficiente da média desta voz.
+
+1. **"ooo" / "eee" / "aaa", ~1 s cada, alternados.** É o exercício que decide: a forma
+   tem de ficar **nítida** — bico no "ooo", fenda no "eee", e o "aaa" a não fazer nem um
+   nem outro (é a baseline). Comparar 0 vs 0.7 vs 1.
+2. **fala normal, 20 s.** O contrário do anterior: **sem caretas espúrias**. Se a boca
+   andar a fazer bicos a meio de frases, é a dose (ou os limiares) e diz-se.
+3. **vogal sustentada, 5 s.** A forma deve manter-se, não desvanecer. Aos 2 s a bancada
+   diz que sobra 83%; a partir daí é a baseline a ganhar terreno, e ver-se-á.
+4. **"pá-pé-pó".** A oclusão é do vídeo e não muda: tem de continuar a fechar igual.
+5. **silêncio com o ruído da sala.** `fo` a 0.00 e boca quieta.
+
+### calibração de máximo — o botão `calibrar máximo` (sem calibração = nada muda)
+
+A calibração de sempre (os 50 frames de cara neutra) mede o **zero** desta cara. O botão
+`calibrar máximo`, ao lado do `recalibrate` nas duas páginas live, mede o outro extremo:
+carrega-se, abre-se a boca ao máximo ("AAA") durante ~40 frames, e guarda-se o **p95** do
+`jawOpen` e da abertura por landmarks. A partir daí a janela de entrada deixa de ser o
+palpite fixo (`RIG_JAW_SPAN` 0.42 / `RIG_LIP_SPAN` 0.085) e passa a ser o curso **desta**
+pessoa. Segunda pressão do botão limpa a medição e volta ao fixo — é assim que se faz o
+A/B.
+
+Fica em `localStorage` (`critter-rigmax`), **global** como as sensibilidades, e de
+propósito **fora do export/importar e da sincronização**: as afinações viajam bem entre
+dispositivos, uma medição feita nesta câmara não — no telemóvel a lente e a distância são
+outras. O `resolveSens` põe-na sempre por cima, portanto uma afinação "só deste avatar"
+não a pode capturar por engano.
+
+**Aplica-se às três cadeias** (v1, v2, v3) e não só à v3, porque a neutralidade é
+demonstrável e não uma promessa: sem medição o `rigSpan` devolve *o mesmo double* que
+estava lá antes, e o `regress.js` confirma-o bit a bit — nos goldens sintéticos e nos 16
+clips reais (a impressão digital de 96 timelines é idêntica à da árvore anterior).
+
+**Duas guardas, e a bancada disse porquê.** O histórico manda: auto-range pelo pico
+recente já foi tentado duas vezes e deu "do 8 para o 80". Isto não é auto-range — é uma
+medição única e deliberada, que não se mexe sozinha — mas uma medição *má* (a pessoa não
+abriu a boca, o tracker perdeu-a) tem de custar pouco:
+
+- **média geométrica com o fixo** — anda metade da distância em log;
+- **chão e tecto** — nunca menos de 0.55× nem mais de 1.8× o span fixo.
+
+Simulado nos 16 clips, com o "AAA" a ser o p98 do queixo dos clips fortes de cada actor
+(o análogo mais próximo de uma abertura deliberada):
+
+| variante | span do queixo | Δ alcance | Δ r | pior Δ r |
+|---|---|---|---|---|
+| span medido em bruto (sem média geométrica) | 0.42 → 0.68 | **−0.18** | −0.004 | −0.029 |
+| com média geométrica (é o que está) | 0.42 → 0.54 | −0.09 | −0.002 | −0.026 |
+| medição má (boca fechada), presa pelo chão | 0.42 → 0.23 | +0.12 | +0.006 | −0.080 |
+
+Ou seja: **a média geométrica corta a metade o estrago** de um máximo grande, que é
+exactamente o modo de falha que este projecto teme (boca contida = "boca presa"). E o
+chão é o que impede uma medição falhada de multiplicar a boca — mesmo totalmente presa
+pela guarda, uma medição má custa correlação no pior clip e sobe o tremor 35%, e é por
+isso que o botão recusa a medição quando a boca mal abriu.
+
+**A direcção do efeito depende da pessoa, e é essa a questão.** Nos dois actores da
+bancada o curso real do queixo é 0.41 e 0.48 (o fixo, 0.42, é um bom palpite) mas o dos
+lábios é 0.108 e 0.118 contra os 0.085 fixos — 26 a 39% acima. Para eles, calibrar
+**contém** a boca em vez de a soltar. Quem tiver o curso curto — mouth pequena, câmara
+de lado, tracker tímido — ganha boca; quem o tiver longo perde saturação. Qual dos dois é
+o caso dele, só o A/B ao vivo diz. No debug (`d`) aparece ` · span 0.31/0.07` com os dois
+spans pessoais em vigor.
+
+#### guião de A/B da calibração de máximo
+
+1. **calibrar** (botão, abrir bem a boca até a contagem acabar) e **falar normal, 20 s**.
+   A boca abre mais, menos, ou igual? Com `d` ligado, comparar o `span` com 0.42/0.085.
+2. **falar baixinho.** É o caso que interessa: se o curso pessoal for curto, é aqui que
+   se nota.
+3. **limpar** (segunda pressão) e repetir os dois. Empate não promove — fica o fixo.
+4. **"pá-pé-pó"** com o máximo calibrado: as bilabiais têm de continuar a fechar (o span
+   mexe na escala, não na oclusão).
+
 ### visemes — como toda a boca abre
 
 Os visemes comandam a abertura de **todas** as bocas; não há segundo caminho. O
@@ -476,7 +638,9 @@ Para usar como webcam em calls: OBS com Window Capture → Virtual Camera, ou pa
   ficam numa base global (`critter-sens`) aplicada a todos os critters. O checkbox
   **`afinação só deste avatar`** grava-as no cfg do critter, que ganha à global — útil
   quando um desenho específico precisa de outra coisa. A paleta, a boca e o fundo
-  continuam sempre por critter
+  continuam sempre por critter. A **calibração de máximo** (`critter-rigmax`) é a
+  excepção: é global, ganha sempre, e não entra no export nem na sincronização — é uma
+  medição *desta* câmara
 - **exportar / importar** — botões no studio: um JSON com favoritos, afinação global e
   todos os cfgs de critter
 - **sincronização** — o `localStorage` é por browser, portanto abrir no telemóvel dava um

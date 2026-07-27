@@ -15,7 +15,7 @@ já sobreviveu a alguma coisa.
 | Ficheiro | Papel |
 |---|---|
 | `fetch-datasets.sh` | traz os 16 clips do RAVDESS (Zenodo 1188976, actores 01 e 02) e normaliza-os com ffmpeg |
-| `capture.py` | vídeo → trace JSON pelo MediaPipe (o **mesmo** modelo e opções da CDN de produção) |
+| `capture.py` | vídeo → trace JSON pelo MediaPipe (o **mesmo** modelo e opções da CDN de produção) + o áudio (envelope e bandas) |
 | `replay.js` | replay de um trace pela cadeia real do `engine.js` (sem cópia: carrega o ficheiro de produção) |
 | `metrics.js` | métricas da timeline contra o envelope do áudio: `r`, `lag`, alcance, jitter, fecho |
 | `regress.js` | goldens numéricos (v1/v2 bit a bit) + asserções da v3 |
@@ -40,8 +40,15 @@ cd tools
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python capture.py                      # clips/ -> traces/
 .venv/bin/python capture.py <clip> --frames 30   # um só, para testar o ambiente
+python3 capture.py --so-audio                    # só o bloco `audio` dos traces que já existem
 node verify-bancada.js --com-v3                  # a bancada vale alguma coisa?
 ```
+
+O `--so-audio` recalcula o `envDb` e as `bandas` a partir dos clips e reescreve-os nos
+traces **sem tocar nos landmarks** — e sem precisar do mediapipe (o `import` dele é
+tardio de propósito, porque um espectro só precisa de numpy e do ffmpeg). É como as
+bandas entraram em traces já capturados, e aborta se o envelope sair diferente do que lá
+estava: um envelope diferente mudava todos os números da bancada por baixo.
 
 Medir:
 
@@ -52,7 +59,8 @@ node tabela.js --hz 30 v1 v3             # à cadência do mobile
 node replay.js <clip> --modo v3          # um clip, para ir ver o que se passa nele
 node gridsearch.js                       # afinação do RIG_V3 (--rapido: grelha grossa)
 
-node replay.js <clip> --modo v3 --audio 0.7 --ruido -55   # com o microfone simulado
+node replay.js <clip> --modo v3 --audio 0.7 --ruido -55      # com o microfone simulado
+node replay.js <clip> --modo v3 --visemes 0.7 --ruido -55    # com o espectro do microfone
 ```
 
 ### o microfone na bancada
@@ -69,6 +77,34 @@ ele por construção — o `r` sobe de 0.66 para 0.88 e não quer dizer nada. O 
 pode dizer sobre o híbrido é só isto: o vale entre sílabas, o jitter, a amplitude, o gate
 contra ruído, e se a oclusão do vídeo continua a ganhar. As asserções em `lib/guardas.js`
 (`assercoesAudio`) são exactamente essas, e correm no `regress.js` como as da v3.
+
+### o espectro na bancada (`--visemes`)
+
+`--visemes <0..1>` injecta o `audio.bandas` do trace (7 log-energias a 100 Hz) no
+`au.bandas`, exactamente pelo parâmetro que ao vivo traz a AnalyserNode. A derivação
+— brilho, baseline por mediana, canais redondo/fenda — corre **dentro do engine**: a
+bancada não tem uma cópia dela, tal como não tem uma cópia da cadeia da boca.
+
+Três avisos sobre o que estes números valem:
+
+- **um clip isolado não chega.** Em 4 segundos a baseline não assenta, e com a trava de
+  arranque (~1.2 s de voz) um clip do RAVDESS não produz forma nenhuma. Os números do
+  README saíram de correr os 16 clips **seguidos**, como um minuto de conversa.
+- **não há verdade fonética aqui.** Mediu-se o contraste entre a frase que começa em
+  "Kids" e a que começa em "Dogs" e deu **−0.06** — nada, e com o sinal trocado. O
+  ataque de cada frase é uma plosiva e sem alinhamento forçado não se isola a vogal.
+- **o que se pode provar** é o resto, e está em `assercoesVisemes`: a direcção (graves →
+  O/U, agudos → E/I), que a forma **não escreve abertura** (`sig.mouth` bit a bit igual
+  com a dose no máximo), o silêncio, o arranque e a vogal longa.
+
+### a calibração de máximo na bancada
+
+Simula-se passando `maxJaw`/`maxLip` no `sens` do `replay` — o "AAA" da pessoa é o p98
+do queixo dos clips fortes de cada actor. Serviu para escolher as guardas (média
+geométrica e o chão de 0.55×) com números em vez de intuição; a tabela está no
+`README.md` da raiz. As asserções de contrato estão em `assercoesMaximo`: sem medição o
+span é o fixo **bit a bit**, um curso largo contém a boca, um curto solta-a, uma medição
+absurda fica presa pelas guardas e a bilabial continua a fechar.
 
 O `gridsearch.js` **não escreve no `engine.js`**: grava a vencedora em
 `out/gridsearch.json` e os valores copiam-se à mão para o `RIG_V3`. É de propósito — uma
@@ -133,6 +169,17 @@ depois do gate.
 
 Reportar em palavras: **atraso**, **tremor**, **aberturas fantasma**, **boca presa** — em
 qual exercício e em que posição do slider.
+
+## Guião de A/B dos visemes por áudio e da calibração de máximo
+
+Os dois guiões completos estão no `README.md` da raiz, nas secções respectivas. Em duas
+linhas, porque é o que se esquece:
+
+- **`áudio nas vogais`** — "ooo/eee/aaa" alternados a 0 vs 0.7 (a forma tem de ficar
+  nítida) e depois fala normal (não pode fazer caretas). No debug, `fo R.. S..`.
+- **`calibrar máximo`** — calibrar, falar normal e baixinho, limpar, repetir. No debug,
+  ` · span 0.31/0.07`. A direcção do efeito depende do curso da boca de quem calibra:
+  não há um "melhor" à partida.
 
 Depois disto: 3-5 clips do próprio utilizador a falar português (30-60 s, luz normal, à
 distância a que usa isto de verdade) entram em `clips/user/` e ficam **holdout
