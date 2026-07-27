@@ -83,6 +83,7 @@ button.rec-on{background:#c0261e}
   <div class="navigation">
     <button id="btn-random">random</button>
     <button id="btn-recal">recalibrate</button>
+    <button id="btn-max">calibrar máximo</button>
     <button id="btn-fav">♡ favorito</button>
     <button id="btn-rec">● gravar</button>
     <button id="btn-save">save png</button>
@@ -111,8 +112,9 @@ button.rec-on{background:#c0261e}
 <script type="module">
 import { FaceLandmarker, FilesetResolver } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs';
 
-/* os 11 sliders originais mantêm chave, range e valores gravados; os dois novos
-   (viseme E, fecho) têm omissão neutra — a 0/1 nada muda. O 5º campo é o grupo. */
+/* os 11 sliders originais mantêm chave, range e valores gravados; os novos
+   (viseme E, fecho, áudio, áudio nas vogais) têm omissão neutra — a 0/1 nada muda.
+   O 5º campo é o grupo. */
 const SLIDERS = [
   ['mouthGain', 'mouth gain', 0.4, 2, 'boca'],
   ['mouthWidth', 'mouth width', 0, 2, 'boca'],
@@ -122,6 +124,7 @@ const SLIDERS = [
   ['closeSpeed', 'fecho (entre sílabas)', 0.5, 2, 'boca'],
   ['smooth', 'reactivity', 0.3, 2, 'boca'],
   ['audioMix', 'áudio (mistura mic)', 0, 1, 'boca'],
+  ['audioVisemes', 'áudio nas vogais (forma)', 0, 1, 'boca'],
   ['gazeGain', 'gaze gain', 0.3, 2, 'cabeça e olhos'],
   ['blinkGain', 'blink gain', 0.5, 2.5, 'cabeça e olhos'],
   ['headGain', 'head gain', 0, 2, 'cabeça e olhos'],
@@ -212,13 +215,14 @@ for (const [key, label, mn, mx, grupo] of SLIDERS) {
   });
 }
 
-/* O microfone é pedido AQUI e só aqui: quando o slider do áudio sai do zero. Nunca no
-   arranque da página — e este handler é um gesto do utilizador, que é o que o browser
-   exige para abrir um AudioContext. A voltar a zero, larga-se o microfone (o indicador
-   de gravação do browser apaga-se, que é o que se espera de um controlo a zero). */
-document.getElementById('s-audioMix').addEventListener('input', e => {
-  if (+e.target.value > 0) page.ligarAudio(); else page.desligarAudio();
-});
+/* O microfone é pedido AQUI e só aqui: quando um dos dois controlos de áudio sai do
+   zero. Nunca no arranque da página — e este handler é um gesto do utilizador, que é
+   o que o browser exige para abrir um AudioContext. A voltar os dois a zero, larga-se
+   o microfone (o indicador de gravação do browser apaga-se, que é o que se espera de
+   controlos a zero). O `ajustaAudio` é que sabe qual dos dois casos é. */
+for (const k of ['audioMix', 'audioVisemes']) {
+  document.getElementById('s-' + k).addEventListener('input', () => page.ajustaAudio());
+}
 
 /* corre a cada loadCritter (inclusive o primeiro, de dentro de startRigPage) */
 function syncPanel(p) {

@@ -65,6 +65,7 @@ function startRigPage(opts) {
     const fg = luminance(api.pal.bg) >= 128 ? '#000' : '#fff';
     titleEl.style.color = fg; descEl.style.color = fg;
     setStatus(tracking ? (cal.ready ? 'tracking — express yourself' : 'calibrating — look neutral at the camera…') : lastStatus);
+    renderMax();
     if (api.renderFavs) api.renderFavs();
     if (opts.onLoad) opts.onLoad(api);
   }
@@ -145,8 +146,9 @@ function startRigPage(opts) {
      (ver `RIG_AUDIO` no engine). A permissão é pedida no momento em que ele sai do
      zero — que é também um gesto do utilizador, e sem gesto o browser não deixa
      abrir um AudioContext. Falhar aqui não pode partir nada: fica em vídeo puro. */
-  const auRef = { db: -100, conf: 0 };   /* reutilizado, não se aloca um por frame */
-  let auCtx = null, auAnalyser = null, auStream = null, auBuf = null, auEstado = 'off';
+  const auRef = { db: -100, conf: 0, bandas: null };   /* reutilizado, não se aloca um por frame */
+  const auBandas = new Float64Array(7);
+  let auCtx = null, auAnalyser = null, auStream = null, auBuf = null, auEsp = null, auEstado = 'off';
 
   async function ligarAudio() {
     if (auEstado !== 'off') return;      /* 'a pedir' | 'on' | 'falhou' — não insiste */
@@ -163,9 +165,15 @@ function startRigPage(opts) {
       if (auCtx.state === 'suspended') await auCtx.resume();
       auAnalyser = auCtx.createAnalyser();
       auAnalyser.fftSize = 1024;
+      /* a suavização do espectro fica a zero: quem suaviza é o engine, em
+         milissegundos e com ataque e queda próprios — o 0.8 por omissão da
+         AnalyserNode é uma constante por frame, exactamente o que a v3 deixou de
+         fazer para não mudar de comportamento entre 30 e 60 fps */
+      auAnalyser.smoothingTimeConstant = 0;
       /* liga-se à fonte e mais nada: encaminhar isto para as colunas era um larsen */
       auCtx.createMediaStreamSource(auStream).connect(auAnalyser);
       auBuf = new Float32Array(auAnalyser.fftSize);
+      auEsp = new Float32Array(auAnalyser.frequencyBinCount);
       auEstado = 'on';
       auRef.conf = 1;
       setStatus('áudio ligado — a boca segue a voz e a câmara');
@@ -182,12 +190,15 @@ function startRigPage(opts) {
   function desligarAudio() {
     if (auStream) { for (const t of auStream.getTracks()) t.stop(); auStream = null; }
     if (auCtx) { try { auCtx.close(); } catch (e) {} auCtx = null; }
-    auAnalyser = null; auBuf = null;
-    auRef.conf = 0; auRef.db = -100;
+    auAnalyser = null; auBuf = null; auEsp = null;
+    auRef.conf = 0; auRef.db = -100; auRef.bandas = null;
     auEstado = 'off';
   }
   api.ligarAudio = ligarAudio;
   api.desligarAudio = desligarAudio;
+
+  /* fronteiras das 7 bandas do espectro — as mesmas do `capture.py` da bancada */
+  const AU_BANDAS_HZ = [50, 200, 400, 800, 1500, 2500, 4000, 8000];
 
   /* RMS do domínio do tempo -> dB. O engine é que trata do chão de ruído e do gate:
      aqui só se mede, para a bancada offline poder injectar exactamente o mesmo. */
@@ -197,16 +208,39 @@ function startRigPage(opts) {
     let s = 0;
     for (let i = 0; i < auBuf.length; i++) s += auBuf[i] * auBuf[i];
     auRef.db = 20 * Math.log10(Math.sqrt(s / auBuf.length) + 1e-7);
+
+    /* espectro por bandas, só quando alguém o quer (é uma FFT por frame). O zero
+       absoluto do Web Audio não é o do ffmpeg da bancada, e não faz diferença
+       nenhuma: a derivação no engine vive de *diferenças* entre bandas e do desvio
+       face à baseline desta voz — um offset comum desaparece nas duas contas. */
+    if (!(api.SENS.audioVisemes > 0)) { auRef.bandas = null; return; }
+    auAnalyser.getFloatFrequencyData(auEsp);
+    const df = auCtx.sampleRate / auAnalyser.fftSize;
+    for (let b = 0; b < 7; b++) {
+      const i0 = Math.max(1, Math.round(AU_BANDAS_HZ[b] / df));
+      const i1 = Math.min(auEsp.length, Math.round(AU_BANDAS_HZ[b + 1] / df));
+      let p = 0, n = 0;
+      for (let i = i0; i < i1; i++) { p += Math.pow(10, auEsp[i] / 10); n++; }
+      auBandas[b] = n ? 10 * Math.log10(p / n + 1e-14) : -140;
+    }
+    auRef.bandas = auBandas;
   }
 
-  /* A página rigged não tem slider: usa o `audioMix` gravado, como qualquer outra
+  /* O microfone serve duas coisas com dose própria — a abertura (`audioMix`) e a forma
+     das vogais (`audioVisemes`) — e basta uma delas fora do zero para valer a pena
+     pedi-lo. A zero as duas, larga-se: o indicador de gravação do browser apaga-se,
+     que é o que se espera de controlos a zero.
+     A página rigged não tem sliders: usa o que está gravado, como qualquer outra
      sensibilidade. Mas continua a não pedir o microfone no arranque — espera pelo
      primeiro gesto, que é o mínimo que o browser exige de qualquer maneira. */
-  function talvezAudio() {
-    if (api.SENS.audioMix > 0 && auEstado === 'off') ligarAudio();
+  function ajustaAudio() {
+    const quer = api.SENS.audioMix > 0 || api.SENS.audioVisemes > 0;
+    if (quer && auEstado === 'off') ligarAudio();
+    else if (!quer && auEstado !== 'off') desligarAudio();
   }
-  window.addEventListener('pointerdown', talvezAudio);
-  window.addEventListener('keydown', talvezAudio);
+  api.ajustaAudio = ajustaAudio;
+  window.addEventListener('pointerdown', ajustaAudio);
+  window.addEventListener('keydown', ajustaAudio);
 
   let detTick = 0, lastTs = -1, lastNow = -1;
   function frame(now) {
@@ -235,6 +269,7 @@ function startRigPage(opts) {
           processLandmarks(res.faceLandmarks[0], bs, sig, cal, api.SENS, dt, auRef);
           lastNow = now;
           if (!was && cal.ready) setStatus('tracking — express yourself');
+          if (maxCal && bs && cal.ready) recolheMaximo(res.faceLandmarks[0], bs);
         }
       } catch (e) { /* um frame falhado do tracker não pode parar o desenho */ }
     } else if (!tracking) {
@@ -260,7 +295,19 @@ function startRigPage(opts) {
            de ruído ainda não assentou ou que o gate a está a cortar */
         (api.SENS.audioMix > 0 && auEstado === 'on'
           ? ' · +A au ' + (sig.au ? sig.au.lvl.toFixed(2) : '0.00')
-          : api.SENS.audioMix > 0 ? ' · +A(' + auEstado + ')' : '');
+          : api.SENS.audioMix > 0 ? ' · +A(' + auEstado + ')' : '') +
+        /* `fo` são os dois canais de forma. Ambos a 0.00 com voz a sair quer dizer
+           que a baseline ainda está a aquecer (~2 s) ou que o som não se afasta o
+           suficiente da média desta voz — que é o caso da maior parte da fala */
+        (api.SENS.audioVisemes > 0 && auEstado === 'on'
+          ? ' · fo R' + (sig.au ? sig.au.round.toFixed(2) : '0.00') +
+            ' S' + (sig.au ? sig.au.spread.toFixed(2) : '0.00')
+          : api.SENS.audioVisemes > 0 ? ' · fo(' + auEstado + ')' : '') +
+        /* spans pessoais, só quando a calibração de máximo está a mandar */
+        ((api.SENS.maxJaw > 0 || api.SENS.maxLip > 0) && cal.ready
+          ? ' · span ' + rigSpan(RIG_JAW_SPAN, api.SENS.maxJaw, cal.ready.jaw).toFixed(2) +
+            '/' + rigSpan(RIG_LIP_SPAN, api.SENS.maxLip, cal.ready.mouth).toFixed(3)
+          : '');
     }
 
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
@@ -374,8 +421,79 @@ function startRigPage(opts) {
 
   api.recalibrate = () => {
     cal = createCalib();
+    maxCal = null;
     if (tracking) setStatus('calibrating — look neutral at the camera…');
   };
+
+  /* ---------- calibração de máximo ----------
+     A calibração normal mede o ZERO desta cara (repouso). Esta mede o outro extremo:
+     o curso que a boca desta pessoa de facto tem. Enquanto não existir, o engine usa
+     a janela fixa (`RIG_JAW_SPAN`/`RIG_LIP_SPAN`), que é um palpite sobre a
+     população — ver a nota do `rigSpan`.
+
+     Guarda-se global (`critter-rigmax`), não por avatar: é da cara e da câmara, como
+     as sensibilidades. E de propósito fora do export/sync — a medição é desta câmara,
+     e empurrá-la para o telemóvel seria dar-lhe o curso medido noutro sítio. */
+  const MAX_FRAMES = 40;
+  let maxCal = null;
+
+  function calibrarMaximo() {
+    if (!tracking) { setStatus('sem câmara não há máximo para medir'); return; }
+    if (!cal.ready) { setStatus('espera pela calibração neutra primeiro'); return; }
+    maxCal = { jaw: [], lip: [] };
+    setStatus('abre a boca ao máximo (AAA) até a contagem acabar… ' + MAX_FRAMES);
+  }
+
+  function recolheMaximo(lm, bs) {
+    maxCal.jaw.push(bs.jawOpen);
+    maxCal.lip.push(rigDist(lm[13], lm[14]) / rigDist(lm[10], lm[152]));
+    if (maxCal.jaw.length < MAX_FRAMES) {
+      setStatus('abre a boca ao máximo (AAA)… ' + (MAX_FRAMES - maxCal.jaw.length));
+      return;
+    }
+    /* p95 e não o máximo: um frame em que o tracker se enganou não pode ser o curso
+       desta pessoa para sempre */
+    const p95 = a => { const s = a.slice().sort((x, y) => x - y); return s[Math.round((s.length - 1) * 0.95)]; };
+    const jaw = p95(maxCal.jaw), lip = p95(maxCal.lip);
+    maxCal = null;
+    /* cada canal passa ou não passa por si: se o tracker não deu queixo mas deu
+       lábios, aproveita-se o que houver e o outro fica com o span fixo */
+    const jawOk = jaw - (cal.ready.jaw || 0) > 0.10;
+    const lipOk = lip - cal.ready.mouth > 0.02;
+    if (!jawOk && !lipOk) {
+      setStatus('a boca mal abriu durante a medição — o máximo fica como estava');
+      renderMax();
+      return;
+    }
+    saveRigMax({ jaw: jawOk ? jaw : 0, lip: lipOk ? lip : 0, at: Date.now() });
+    aplicaMaximo();
+    setStatus('máximo calibrado: queixo ' + (jawOk ? jaw.toFixed(2) : '—') +
+      ' · lábios ' + (lipOk ? lip.toFixed(3) : '—') + ' — compara com o botão a limpar');
+  }
+
+  /* o máximo entra no SENS como qualquer sensibilidade; o `resolveSens` põe-no sempre
+     por cima, portanto uma afinação só deste avatar não o pode capturar */
+  function aplicaMaximo() {
+    const m = loadRigMax();
+    api.SENS.maxJaw = m && m.jaw > 0 ? m.jaw : 0;
+    api.SENS.maxLip = m && m.lip > 0 ? m.lip : 0;
+    renderMax();
+  }
+
+  const maxBtn = document.getElementById('btn-max');
+  function renderMax() {
+    if (!maxBtn) return;
+    const tem = api.SENS.maxJaw > 0 || api.SENS.maxLip > 0;
+    maxBtn.textContent = tem ? 'máximo ✓ (limpar)' : 'calibrar máximo';
+  }
+  if (maxBtn) maxBtn.addEventListener('click', () => {
+    if (api.SENS.maxJaw > 0 || api.SENS.maxLip > 0) {
+      saveRigMax(null);
+      aplicaMaximo();
+      setStatus('máximo apagado — de volta à janela fixa');
+    } else calibrarMaximo();
+  });
+  api.calibrarMaximo = calibrarMaximo;
 
   /* ---------- favoritos ---------- */
   const favBtn = document.getElementById('btn-fav');
