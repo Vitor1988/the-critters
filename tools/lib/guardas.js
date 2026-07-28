@@ -974,6 +974,30 @@ function assercoesEmocoes(eng) {
       CANAIS.length + ' exactamente no preset');
   }
 
+  /* 4b. A CARA CONTINUA A MANDAR. O preset e um CHAO, nunca um substituto: um sorriso
+        real passa o 0.70 do feliz, um frown real passa o -0.50 do triste, e um canal
+        que o preset nao reclama nem sequer e escrito. A primeira versao substituia os
+        seis canais pelo preset e a cara morria no ecra enquanto o botao estivesse
+        ligado — com a semantica antiga estas tres linhas ficam vermelhas. */
+  {
+    const maus = [];
+    const casos = [
+      ['sorriso real passa o chao do feliz', 'feliz', { expr: 0.9, joy: 0.95 }, { expr: 0.9, joy: 0.95 }],
+      ['frown real passa o chao do triste', 'triste', { expr: -0.8 }, { expr: -0.8 }],
+      ['canal nao reclamado fica da cara', 'feliz', { surprise: 0.6, wide: 0.3 }, { surprise: 0.6, wide: 0.3 }]
+    ];
+    for (const [nome, emocao, entrada, esperado] of casos) {
+      const emo = eng.createEmo(), sig = eng.createSig();
+      for (const c in entrada) sig[c] = entrada[c];
+      eng.rigEmoToggle(emo, emocao);
+      for (let i = 0; i < 40; i++) eng.rigEmoApply(emo, sig, 16.7);
+      for (const c in esperado)
+        if (!Object.is(sig[c], esperado[c])) maus.push(nome + ': ' + c + '=' + sig[c] + ' != ' + esperado[c]);
+    }
+    teste('a cara continua a mandar por cima do preset', maus.length === 0,
+      maus.length ? maus.slice(0, 4).join(' | ') : 'sorriso 0.9 e frown -0.8 sobrevivem ao feliz/triste, surprise/wide nao reclamados intactos');
+  }
+
   const IDS = idsSinteticos(60);
 
   /* 5. O TRISTE DEIXA FALAR. O `expr` negativo desce os cantos e o mesmo budget que

@@ -53,8 +53,10 @@ step: os ficheiros são o artefacto.
 - **As emoções são um overlay de sessão** (`RIG_EMOCOES`/`rigEmoApply`): escrevem os seis
   canais de expressão (`joy`, `sad`, `surprise`, `anger`, `wide`, `expr`) entre o tracker e
   o `applyRig`, e mais nenhum — nunca a abertura (essa é dos visemes), o pestanejo, o gaze
-  ou a cabeça. Nunca são gravadas (nem no SENS, nem no cfg, nem no sync) e o `loadCritter`
-  não as desliga. Com peso zero o `rigEmoApply` não escreve um único double.
+  ou a cabeça. **O preset é um chão, nunca um substituto**: a cara continua a mandar (um
+  sorriso real passa o chão, um canal não reclamado nem é escrito). Nunca são gravadas
+  (nem no SENS, nem no cfg, nem no sync) e o `loadCritter` não as desliga. Com peso zero o
+  `rigEmoApply` não escreve um único double.
 - **As sensibilidades são globais** (`critter-sens`), com override opcional por avatar em
   `cfg.sens` — são da cara de quem usa, não do bicho.
 - **A boca não sai da cara por construção**, não por um limite fixo: os budgets de abertura

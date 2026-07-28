@@ -257,10 +257,14 @@ canais de expressão, mais nenhum. Duas metades:
   o canal exactamente no valor do preset, e é dele que dependem as contas abaixo. Com peso
   0 não se escreve um único double (`Object.is` no `sig` inteiro), que é o que faz
   "desligado" ser literalmente o caminho de sempre. Há uma linha à parte para um nome que
-  não é emoção: inclui `__proto__` e `toString`, que a cadeia de protótipos deixa passar
-  pelo `if (RIG_EMOCOES[nome])` do toggle — o rótulo fica em `emo.ativo`, mas nenhum deles
-  está no `RIG_EMO_ORDEM`, portanto não há peso a subir e o `sig` não é tocado. É isso que
-  a asserção prende.
+  não é emoção: inclui `__proto__` e `toString`, que a cadeia de protótipos deixava passar
+  pelo `if (RIG_EMOCOES[nome])` do toggle — hoje o toggle usa `hasOwnProperty` e nem o
+  rótulo fica, mas a asserção prende as duas coisas na mesma (peso 0 e `sig` intacto).
+- **a cara manda.** O preset é um chão, nunca um substituto: um `expr` real de 0.9
+  sobrevive ao `feliz` (0.70), um frown de -0.8 ao `triste` (-0.50), e um canal que o
+  preset não reclama nem sequer é escrito. Com a semântica de substituição (a primeira
+  versão, em que a cara morria no ecrã com o botão ligado) esta linha fica vermelha nos
+  três casos — foi verificado por mutação.
 - **as arestas dos números**, cada uma com o contra-exemplo colado: o `triste` deixa o
   `jawDrop` em **50–74%** do sem-emoção (exige-se ≥ 35%) e `expr: -1` à mão dá
   **exactamente 0**, que é fala invisível; a `surpresa` deixa o olho fechado a **16.5%** do

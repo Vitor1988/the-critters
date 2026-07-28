@@ -705,6 +705,14 @@ Os presets escrevem **seis canais de expressão** e mais nenhum: `joy`, `sad`, `
 ficam intactos, bit a bit. **A boca continua a abrir pelos visemes**, que é o que faz com
 que dê para *falar* zangado em vez de ficar com uma careta congelada.
 
+**E a cara continua a mandar**: o preset é um **chão** dosado pela rampa, nunca um
+substituto — a mesma divisão de trabalho dos visemes por áudio. Um sorriso real sobe acima
+do `0.70` do `feliz`, a testa continua a mexer as sobrancelhas durante qualquer emoção, e
+um canal que o preset não reclama nem sequer é escrito. A primeira versão substituía os
+seis canais pelo preset e no ecrã a cara morria enquanto o botão estivesse ligado — foi ao
+vivo que se viu, e é por isso que o chão nunca empurra além do preset: a cara sozinha já
+podia ir onde quisesse, e isso não é novidade desta camada.
+
 Os números não são gosto, são as arestas medidas do `applyRig`:
 
 - **`expr -0.50` deixa 47.6% do curso do queixo** — o `applyRig` desconta o *frown* ao
@@ -726,7 +734,7 @@ esquina. É uma mudança de **forma** — os cantos a curvarem —, nunca um cro
 desenhos.
 
 **Latch**: a mesma tecla desliga, outra troca. A trocar, as duas pesam ao mesmo tempo e o
-valor final é a média ponderada dos presets, portanto ao ir de `1` para `2` o `expr` **passa
+chão é a média ponderada dos presets, portanto ao ir de `1` para `2` o chão do `expr` **passa
 pelo zero** — a cara faz a curva pelo neutro em vez de saltar de uma forma para a outra.
 
 Ao largar, o canal volta à cara por baixo: o `rigEmoApply` guarda a base e o que lá deixou,

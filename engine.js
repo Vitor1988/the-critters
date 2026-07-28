@@ -1647,6 +1647,13 @@ function applyIdle(sig, mouse, W, H, st) {
    escreve) e em mais nenhum: a abertura (mouth/press/pucker/funnel/mouthW/jawX), o
    pestanejo, o gaze e a cabeça ficam intactos. A fala continua a vir dos visemes; a
    emoção é a cara em volta — é por isso que dá para falar zangado.
+
+   A CARA CONTINUA A MANDAR: o preset é um CHÃO dosado pela rampa, nunca um
+   substituto — a mesma divisão de trabalho dos visemes por áudio (o vídeo manda, o
+   resto acrescenta). Um sorriso real sobe acima do 0.70 do `feliz`; as sobrancelhas
+   continuam a seguir a testa; um canal que a emoção não reclama nem sequer é
+   escrito. A primeira versão substituía os seis canais pelo preset, e no ecrã a
+   cara morria enquanto o botão estivesse ligado — foi ao vivo que se viu.
    Os números estão presos às arestas medidas do applyRig:
      · expr -0.50 deixa 47.6% do curso do queixo ((1-0.5)/1.05); a -1 deixava ZERO,
        que é fala invisível
@@ -1702,23 +1709,28 @@ function rigEmoApply(emo, sig, dtMs) {
   }
   if (soma === 0) return 0;
 
-  /* uma emoção sozinha a fundo dá k = 1 e o canal fica EXACTAMENTE no valor do preset —
-     é isso que prende as contas de cima; a duas em transição a soma passa de 1 e o k
-     trava, que a mistura não pode ir além da substituição total */
   const k = Math.min(1, soma);
   for (const canal of RIG_EMO_CANAIS) {
-    /* média ponderada dos presets: ao trocar, as duas pesam ao mesmo tempo e o expr passa
-       pelo zero — a cara faz a curva pelo neutro em vez de saltar de uma forma para a outra */
-    let alvo = 0;
-    for (const nome of RIG_EMO_ORDEM) alvo += suave[nome] * (RIG_EMOCOES[nome][canal] || 0);
-    alvo /= soma;
+    /* média ponderada dos presets, dosada pelo peso: ao trocar, as duas emoções pesam ao
+       mesmo tempo e o chão do expr passa pelo zero — a cara faz a curva pelo neutro em
+       vez de saltar de uma forma para a outra. Com uma emoção sozinha a fundo isto É o
+       valor do preset, e é o que prende as contas de cima numa cara neutra. */
+    let chao = 0;
+    for (const nome of RIG_EMO_ORDEM) chao += suave[nome] * (RIG_EMOCOES[nome][canal] || 0);
+    chao /= Math.max(1, soma);
+    /* canal que nenhuma das emoções em jogo reclama: fica da cara, nem se escreve */
+    if (chao === 0) continue;
     /* A base é a cara por baixo. Se o canal está exactamente como o deixámos, ninguém lhe
        tocou desde então (modo rato: o applyIdle não escreve estes seis) e a base continua
        a ser a de sempre — é isto que faz a emoção LARGAR em vez de ficar colada no preset.
        Com o tracker a escrever, a base é o valor fresco dele e o EMA retoma sem salto. */
     const base = Object.is(sig[canal], emo.escrito[canal]) ? emo.base[canal] : sig[canal];
     emo.base[canal] = base;
-    sig[canal] = emo.escrito[canal] = base + (alvo - base) * k;
+    /* o CHÃO, com sinal: a cara passa sempre — o `max` (ou o `min`, no expr negativo)
+       deixa um sorriso real subir acima do preset e uma testa real continuar a mexer.
+       Nunca empurra além do preset, portanto as arestas medidas lá de cima aguentam-se:
+       a cara sozinha já podia ir onde quisesse, isso não é novidade desta camada. */
+    sig[canal] = emo.escrito[canal] = chao < 0 ? Math.min(base, chao) : Math.max(base, chao);
   }
   return k;
 }
