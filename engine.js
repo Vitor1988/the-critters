@@ -60,6 +60,15 @@ const EYE_STYLES = ['dot', 'ball', 'dead', 'chameleon', 'lazy', 'star', 'closed'
 /* 'rigged' fica fora dos pesos de propósito: nunca sai por sorteio, só é escolhida à mão
    no studio. É a boca desenhada para o rig — ver RIG_VISEMES. */
 const MOUTH_STYLES = ['smile', 'chill', 'mad', 'open', 'fangs', 'tongue', 'w', 'zigzag', 'o', 'grin', 'smirk', 'rigged'];
+/* Quatro bocas que o gerativo desenha bem e o rig não anima com honestidade: a língua da
+   `tongue` fica pendurada a bombear com a mandíbula, e a `fangs`/`grin` vivem de dentes
+   que no rig são invisíveis (não há mandíbula a que os prender). Em vez de as deixar
+   cair, cada uma tem destino — e só no rig, como já acontece com os olhos: o sorteio, os
+   pesos e o index ficam byte a byte iguais.
+     tongue/fangs → smile   desenham o MESMO arco: a linha de repouso é bit a bit igual
+     zigzag       → w       o vizinho de registo (linha não-arco, carácter parecido)
+     grin         → open    o mesmo ramo do buildRig (buraco → eixo da elipse) */
+const RIG_MOUTH_SWAP = { tongue: 'smile', fangs: 'smile', zigzag: 'w', grin: 'open' };
 const TOP_STYLES = ['none', 'horns', 'antenna', 'mohawk', 'halo'];
 const PATTERNS = ['none', 'stripes', 'spots', 'mask', 'patch'];
 const ACCESSORIES = ['none', 'blush', 'whiskers', 'scar', 'eyepatch', 'piercing', 'nosering', 'hat', 'beanie', 'earring'];
@@ -501,7 +510,10 @@ function buildModel(id, opts) {
   }
 
   const mouthStart = shapes.length;
-  const mouthStyle = MOUTH_STYLES[t.mouth];
+  let mouthStyle = MOUTH_STYLES[t.mouth];
+  /* depois do merge dos traits de propósito: um cfg antigo com uma boca escondida
+     gravada à mão cai também na troca (não se migra nada no localStorage por isto) */
+  if (opts && opts.rig && RIG_MOUTH_SWAP[mouthStyle]) mouthStyle = RIG_MOUTH_SWAP[mouthStyle];
   const my = myBase, mw = Math.min(34, mouthRx * 0.55), mh = 24;
   const smileArcY = (tx) => my - 12 + mh * Math.sin(Math.PI * Math.max(0, Math.min(1, (tx + mw) / (2 * mw))));
   let teethCurve = null, teethH = 0;

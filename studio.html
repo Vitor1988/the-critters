@@ -189,7 +189,10 @@ falaSel.addEventListener('change', () => {
 falaAutoChk.addEventListener('change', () => gravaSens({ speechAuto: falaAutoChk.checked ? 1 : 0 }));
 
 PALETTES.forEach((p, i) => palSel.add(new Option(p.name, i)));
-MOUTH_STYLES.forEach((m, i) => mouthSel.add(new Option(m, i)));
+/* as bocas que o rig troca não entram no seletor — mostrar uma opção que esta página
+   nunca desenha é mentira. Ficam 8, e os values continuam a ser os índices de sempre,
+   portanto nada se desloca. */
+MOUTH_STYLES.forEach((m, i) => { if (!RIG_MOUTH_SWAP[m]) mouthSel.add(new Option(m, i)); });
 
 const slidersEl = document.getElementById('sliders');
 let grupoAtual = '';
@@ -234,7 +237,11 @@ function syncPanel(p) {
   const cfg = loadCritterCfg(p.id);
   const t = parseId(p.id);
   palSel.value = cfg.traits && cfg.traits.palette !== undefined ? cfg.traits.palette : t.palette;
-  mouthSel.value = cfg.traits && cfg.traits.mouth !== undefined ? cfg.traits.mouth : t.mouth;
+  const mi = cfg.traits && cfg.traits.mouth !== undefined ? cfg.traits.mouth : t.mouth;
+  /* um cfg antigo pode ter uma boca escondida gravada: o rig mostra o destino e o select
+     mostra o mesmo, em vez de ficar em branco por não ter a opção */
+  const destino = RIG_MOUTH_SWAP[MOUTH_STYLES[mi]];
+  mouthSel.value = destino ? MOUTH_STYLES.indexOf(destino) : mi;
   bgInput.value = p.pal.bg;
   localChk.checked = !!p.sensLocal;
   /* hierarquia v4 > v3 > v2 > v1 se mais do que uma aparecer gravada (não deve
