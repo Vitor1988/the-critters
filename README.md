@@ -277,6 +277,39 @@ para 3 ms — e é exactamente esse o engodo, porque o que ele faz é seguir a e
 vez da boca. Fica no studio só porque o caso que interessa é o oposto do que estes clips
 têm (fala baixa, cansada, ao fim do dia) e esse só se vê ao vivo.
 
+### `fala v4` — a v3 com os filtros exactos (omissão: não existe)
+
+A v3 promete "filtros em milissegundos, não em frames", e cumpre-o em quase toda a
+cadeia — menos num sítio. O coeficiente do EMA (`rigEmaA`) tem um **piso de 0.02**, e
+esse piso satura qualquer constante de tempo acima de `dt/0.0202`: **827 ms a 60 fps**,
+2475 ms a 20. Ou seja, o tau longo volta a ser um coeficiente por frame, que é
+exactamente o defeito da v1 que a v3 veio corrigir.
+
+Na v3 só um tau está acima dessa fronteira: a **baseline de 2 s do sorriso**, a que separa
+o "eee" (evento) de quem simplesmente fala a sorrir (fundo lento). Medido com o mesmo
+degrau de sorriso, 2 s depois:
+
+| cadência | baseline v3 | canal do "eee" (v3) | baseline v4 | canal do "eee" (v4) |
+|---|---|---|---|---|
+| 60 fps | 0.547 | 0.102 | 0.380 | 0.407 |
+| 30 fps | 0.421 | 0.330 | 0.379 | 0.407 |
+| 20 fps | 0.379 | 0.405 | 0.379 | 0.405 |
+
+**4x de diferença entre cadências** no canal que alimenta o viseme E — e o telemóvel corre
+o tracker a metade da cadência do portátil, portanto isto não é hipótese de laboratório.
+
+A v4 é a v3 com o EMA sem esse piso (fica só o mínimo anti-degenerado, 1e-4). Não é uma
+correcção da v3, é uma **quarta opção do select**: a v3 foi validada ao vivo com o piso, e
+o que aqui muda é o comportamento dela em cadências baixas — quem decide continua a ser o
+A/B. Nos taus curtos (18 a 120 ms, mesmo com os sliders nos extremos) o piso nunca mordia,
+portanto **a v4 só se distingue da v3 onde há sorriso**: nas poses da bancada dá o mesmo
+número até ao último bit.
+
+Grava-se como `speechV4: 1` **com `speechV3: 1` também** — é a mesma cadeia, e assim quem
+só lê o `speechV3` (o debug do rig-page, um backup antigo) continua a dizer a verdade. A
+consequência a saber: no modo debug a v4 aparece como `V3`. O `auto range` está disponível
+nas duas.
+
 ### lipsync híbrido — o slider `áudio` (omissão 0, desligado)
 
 A câmara e o microfone falham em coisas diferentes. **A câmara não sente o ritmo das
@@ -497,6 +530,41 @@ aquecer (~2 s) ou que o som não se afasta o suficiente da média desta voz.
    diz que sobra 83%; a partir daí é a baseline a ganhar terreno, e ver-se-á.
 4. **"pá-pé-pó".** A oclusão é do vídeo e não muda: tem de continuar a fechar igual.
 5. **silêncio com o ruído da sala.** `fo` a 0.00 e boca quieta.
+
+#### três buracos no caminho do áudio, tapados
+
+Encontrados a ler o código contra o que ele promete, e cada um reproduzido em node com o
+engine de produção antes de se lhe tocar. Nenhum deles se via na bancada: os três vivem em
+transições (lábios selados, microfone a arrancar, microfone a morrer) que os clips não têm.
+
+- **o slider da FORMA abria a boca.** Os canais do microfone entravam no solver dos
+  visemes, e o `own` das poses O/U — a abertura própria que faz o "O" sair redondo com o
+  queixo fechado — passava daí para o `amount`, que é a abertura. Num /m/ com o espectro
+  escuro (round 0.74) e os lábios colados (`press` 0.95), o drive pedia **0.835** de
+  abertura contra os 0.020 do vídeo: no desenho, a boca abria **21 px** onde devia abrir
+  3.6, e a pose de press desaparecia por baixo (0.94 → 0.58). Agora o áudio passa pelo
+  **mesmo veto da oclusão** que trava a mistura na abertura, e o `amount` conta só o `own`
+  dos pesos de vídeo. A forma continua a chegar: com a boca aberta e sem oclusão, o peso do
+  "O" mantém-se em 0.60.
+- **um frame de zeros envenenava o chão de ruído.** O silêncio digital (−100 dB: a
+  AnalyserNode antes de o stream debitar, o micro em mute, o AudioContext suspenso) entrava
+  no anel como medição legítima. Um único frame bastava para pôr o chão em −100 e o gate em
+  −92 — e o ruído de sala a −55 dB passava a ler-se como **voz a 1.00 durante 6.8 s**, com
+  a boca a mastigar a ventoinha. Agora "sem sinal" não é "silêncio": não entra no anel nem
+  mexe no chão, e o nível só se afirma depois de o anel ter ouvido ~1 s de sala real (a
+  mesma disciplina do arranque da baseline). O atraso é nenhum na prática — nas sequências
+  medidas a boca começa a seguir a voz exactamente no mesmo instante que antes (1.62 s a
+  ligar o microfone a meio de uma frase, porque é o gate que manda, não a trava).
+- **a forma congelava com o microfone morto.** Sem microfone vivo o estado do áudio deixava
+  de ser escrito, mas continuava a ser lido: a morrer a meio de um "ooo", o canal redondo
+  ficava em **0.833 para sempre** e a boca presa num "O" — pelo microfone que já lá não
+  estava. Agora larga com a constante de descida normal (0.003 ao fim de 0.5 s, 0.000 a
+  1 s), tal como largaria se a voz tivesse simplesmente parado.
+
+De caminho, dois mais pequenos: um `dB` que não fosse número punha o chão e o gate em NaN
+para o resto da sessão, e um blendshape em falta envenenava o One Euro da v3 da mesma
+maneira (o `rigClamp` deixa passar NaN e o filtro não tem por onde o largar) — a boca
+ficava em NaN até se recarregar a página. Ambos morrem numa guarda.
 
 ### calibração de máximo — o botão `calibrar máximo` (sem calibração = nada muda)
 

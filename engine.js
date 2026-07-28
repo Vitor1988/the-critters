@@ -821,7 +821,9 @@ const RIG_VISEMES = {
 /* Pesos dos visemes a partir dos sinais da cara (o "viseme solver"). A zona morta existe
    porque o tracker nunca dá zero com a cara em repouso — sem ela, o resto de pucker e de
    stretch de uma cara parada mantinha a boca do avatar entreaberta. */
-function rigVisemeWeights(sig, SENS) {
+/* `semAudio` corta o contributo do microfone: é o que o `rigVisemeDrive` usa para saber
+   quanta abertura o VÍDEO pediu, sem a forma que o áudio acrescentou por cima. */
+function rigVisemeWeights(sig, SENS, semAudio) {
   const fx = SENS && SENS.puckerFx !== undefined ? SENS.puckerFx : 1;
   const dead = (v, d) => rigClamp((v - d) / (1 - d), 0, 1);
   const open = rigClamp(sig.mouth, 0, 1);
@@ -835,10 +837,18 @@ function rigVisemeWeights(sig, SENS) {
      entram AQUI, nas entradas do solver, e não nas poses nem na abertura. O `max` é o
      que faz o vídeo continuar a mandar quando ele já viu a forma — o áudio só
      acrescenta quando a cara não deu sinal. Sem dose ou sem microfone, nem se lê. */
-  const avDose = SENS && SENS.audioVisemes !== undefined ? SENS.audioVisemes : 0;
+  const avDose = semAudio || !SENS || SENS.audioVisemes === undefined ? 0 : SENS.audioVisemes;
   if (avDose > 0 && sig.au) {
     const K = RIG_VISAUDIO;
-    const r = avDose * (sig.au.round || 0), s = avDose * (sig.au.spread || 0);
+    /* e passam pelo MESMO veto da oclusão que trava a mistura na abertura
+       (`rigAudioVeto`): o microfone pede forma, a cara é que a autoriza. Sem ele, um
+       /m/ — que tem tanta energia como a vogal a seguir, e um espectro escuro — punha o
+       solver a pedir um "O" com os lábios colados: medido, com `sig.mouth` 0.02 e press
+       0.95, o drive pedia amount 0.835 (contra 0.020 sem áudio) e a boca abria 21 px
+       onde devia abrir 3.6. Na v1 a oclusão é o `press`; na v3 o `sig.press` É a
+       oclusão própria (`v.oc`), que é o sinal certo nas duas. */
+    const dose = rigAudioVeto(avDose, rigClamp(sig.press, 0, 1));
+    const r = dose * (sig.au.round || 0), s = dose * (sig.au.spread || 0);
     pk = Math.max(pk, r * K.pesoU);
     fn = Math.max(fn, r * K.pesoO);
     st = Math.max(st, s);
@@ -867,7 +877,20 @@ function rigVisemeDrive(sig, SENS) {
     d.rx += w[k] * v.rx; d.ratio += w[k] * v.ratio;
     d.upShare += w[k] * v.upShare; d.own += w[k] * v.own; d.p += w[k] * v.p;
   }
-  d.amount = Math.max(rigClamp(sig.mouth, 0, 1), d.own);
+  /* A ABERTURA é do vídeo, e só dele. O `own` das poses existe para o "O" sair redondo
+     com o queixo quase fechado — mas a partir do momento em que a forma pode vir do
+     microfone, herdar esse `own` fazia o slider da FORMA mandar na ABERTURA, que é
+     exactamente a divisão de trabalho que o `audioMix` respeita e este caminho não.
+     Por isso o amount conta só o `own` dos pesos de vídeo; a mistura das poses (rx,
+     ratio, upShare, p) é a de cima, com o áudio incluído. Sem `audioVisemes` — ou sem
+     microfone — o segundo solver nem corre, e o amount é o mesmo double de sempre. */
+  let own = d.own;
+  if (SENS && SENS.audioVisemes > 0 && sig.au) {
+    const wv = rigVisemeWeights(sig, SENS, true);
+    own = 0;
+    for (const k in wv) own += wv[k] * RIG_VISEMES[k].own;
+  }
+  d.amount = Math.max(rigClamp(sig.mouth, 0, 1), own);
   return d;
 }
 
@@ -1004,6 +1027,17 @@ const RIG_V3 = {
    mesmo tempo de subida. */
 const rigEmaA = (dt, tau) => rigClamp(1 - Math.exp(-dt / Math.max(1, tau)), 0.02, 1);
 
+/* ...mas só até onde o piso de 0.02 deixa. Acima de tau ≈ dt/0.0202 (827 ms a 60 fps,
+   2475 ms a 20) o piso morde, o coeficiente volta a ser constante por frame e a cadeia
+   volta a mudar de comportamento com a cadência — o defeito que a v3 veio corrigir.
+   Medido no único tau longo que a v3 tem, a baseline de 2 s do sorriso: 2 s depois do
+   mesmo degrau a baseline vale 0.547 a 60 fps e 0.379 a 20, e o canal do "eee" que sai
+   dela 0.102 contra 0.405 — 4x.
+   Isto não corrige a v3: a v3 foi validada ao vivo com o piso, tal como está. É o EMA da
+   v4 (`speechV4`), e o piso que fica é só o anti-degenerado (com tau infinito o filtro
+   deixava de andar). */
+const rigEmaLongo = (dt, tau) => rigClamp(1 - Math.exp(-dt / Math.max(1, tau)), 1e-4, 1);
+
 /* One Euro: corte adaptativo à velocidade. Com a cara parada filtra muito (mata o
    tremor do tracker, que é o que faz a boca vibrar em silêncio); em movimento
    filtra pouco (não come o ataque da sílaba). Um EMA fixo tem de escolher um dos
@@ -1054,6 +1088,12 @@ const RIG_AUDIO = {
      Foi o par que o projecto de facto teme: o vale entre sílabas e o tremor. */
   janelaMs: 4000,     /* janela do chão de ruído */
   pctChao: 10,        /* e o percentil dela que conta como chão */
+  /* fracção do anel que tem de estar cheia de amostras REAIS antes de o nível valer
+     alguma coisa (~1 s a 60 fps). O anel nasce pré-preenchido com a primeira amostra,
+     portanto até haver sala que chegue o percentil é um palpite sobre uma amostra só —
+     e é a mesma disciplina do `prontoMs` da forma: o microfone não manda antes de saber
+     o que é o silêncio desta sala. */
+  prontoFrac: 0.25,
   /* a 10 dB/s um degrau de ruído (o ar condicionado a arrancar) deixa de mexer a boca
      ao fim de ~5 s em vez de ~9 s, e não custa nada na fala corrida: em 40 s de fala
      contínua o chão assenta no mesmo sítio com 3 ou com 25 dB/s — quem manda no regime
@@ -1102,12 +1142,37 @@ function rigAudioVeto(mix, ocl) {
   return mix * (1 - rigClamp((ocl - K.vetoDead) / (K.vetoCheio - K.vetoDead), 0, 1));
 }
 
+/* Sem sinal do microfone o estado LARGA, não congela. "Sem sinal" é tudo o que não é
+   uma medição: zeros digitais (o AnalyserNode antes de o stream debitar, o micro em
+   mute, o AudioContext suspenso), `conf` a zero, ou o microfone que morreu a meio.
+   As constantes são as de descida de cada canal — larga como largaria se a voz tivesse
+   simplesmente parado, que é a única coisa que se pode afirmar sem ouvir nada. */
+function rigAudioLargaNivel(a, dt) {
+  a.lvl += (0 - a.lvl) * rigEmaA(dt, RIG_AUDIO.relMs);
+}
+function rigAudioLargaForma(a, dt) {
+  const K = RIG_VISAUDIO;
+  a.round += (0 - a.round) * rigEmaA(dt, K.relMs);
+  a.spread += (0 - a.spread) * rigEmaA(dt, K.relMs);
+}
+
 /* nível de voz 0..1 a partir do dB instantâneo do microfone. O estado (anel, histograma,
    chão, tecto) vive no `sig.au`, criado à primeira utilização — sem microfone fica nulo.
    O histograma de 1 dB é o que torna o percentil O(1) por frame em vez de uma ordenação. */
 function rigAudioLevel(sig, au, dt) {
   const K = RIG_AUDIO;
   const db = rigClamp(au.db, K.dbMin, 0);
+  /* Silêncio digital NÃO é uma medição de silêncio — é ausência de medição, e não pode
+     entrar no anel. Um único frame de zeros punha o chão em −100, o gate em −92, e a
+     partir daí o ruído de sala a −55 dB lia-se como voz a 1.00 durante 6.8 s (medido).
+     O `!(db > ...)` apanha de caminho um dB que não seja número, que envenenava o chão
+     e o gate para sempre. Sem sinal larga-se o nível e o anel fica com o que já sabia
+     da sala; antes do primeiro sinal nem se cria estado. */
+  if (!(db > K.dbMin)) {
+    if (!sig.au) return 0;
+    rigAudioLargaNivel(sig.au, dt);
+    return sig.au.lvl;
+  }
   const bin = Math.round(db) - K.dbMin;
   let a = sig.au;
   if (!a) {
@@ -1115,7 +1180,7 @@ function rigAudioLevel(sig, au, dt) {
     const n = rigClamp(Math.round(K.janelaMs / Math.max(8, dt)), 60, 600);
     /* `round`/`spread` são os canais de forma (ver `rigAudioShape`): vivem aqui
        porque são estado do microfone, e sem microfone não há nenhum */
-    a = sig.au = { anel: new Array(n).fill(bin), i: 0, bins: new Array(101).fill(0),
+    a = sig.au = { anel: new Array(n).fill(bin), i: 0, bins: new Array(101).fill(0), validos: 0,
       chao: db, teto: db + K.spanMin, gate: db + K.margemDb, lvl: 0, round: 0, spread: 0 };
     a.bins[bin] = n;
   }
@@ -1123,17 +1188,22 @@ function rigAudioLevel(sig, au, dt) {
   a.bins[bin]++;
   a.anel[a.i] = bin;
   a.i = (a.i + 1) % a.anel.length;
+  if (a.validos < a.anel.length) a.validos++;
 
   let acc = 0, b = 0;
   const alvoN = a.anel.length * K.pctChao / 100;
-  for (; b < 100; b++) { acc += a.bins[b]; if (acc >= alvoN) break; }
+  /* `b <= 100`: o histograma vai até ao bin 100 (0 dB, o fundo de escala) e a varredura
+     tem de o poder somar como qualquer outro */
+  for (; b <= 100; b++) { acc += a.bins[b]; if (acc >= alvoN) break; }
   const pChao = b + K.dbMin;
   a.chao = pChao < a.chao ? pChao : Math.min(pChao, a.chao + K.subidaDbS * dt / 1000);
   a.teto = Math.max(db, a.teto - K.tetoQuedaDbS * dt / 1000);
 
   a.gate = a.chao + K.margemDb;
   const span = rigClamp(a.teto - a.gate, K.spanMin, K.spanMax);
-  const alvo = Math.pow(rigClamp((db - a.gate) / span, 0, 1), K.gamma);
+  /* e o nível só se afirma depois de o anel ter ouvido sala que chegue (ver `prontoFrac`) */
+  const pronto = rigClamp(a.validos / (a.anel.length * K.prontoFrac), 0, 1);
+  const alvo = pronto * Math.pow(rigClamp((db - a.gate) / span, 0, 1), K.gamma);
   a.lvl += (alvo - a.lvl) * rigEmaA(dt, alvo > a.lvl ? K.atkMs : K.relMs);
   return a.lvl;
 }
@@ -1279,8 +1349,18 @@ function rigSpeechV3(bs, sig, calib, SENS, dt, pucker, smile, mouthR, auMix, auA
   if (!v) v = sig.v3 = { jf: { x: null, dx: 0 }, cf: { x: null, dx: 0 }, oc: 0, ap: 0,
     pico: 0, holdT: 0, alvoAnt: 0, smile: smile, lo: 0, hi: K.auto.minSpan };
 
-  const jf = rigOneEuro(v.jf, rigClamp(bs.jawOpen, 0, 1), dt, K.euro);
-  const cf = rigOneEuro(v.cf, rigClamp(bs.mouthClose, 0, 1), dt, K.euro);
+  /* **fala v4** (`speechV4`, omissão 0): esta cadeia, filtrada com o EMA que honra os
+     taus longos (`rigEmaLongo`). A troca é global e não uma excepção numa linha porque
+     dos taus daqui só a baseline do sorriso (2 s) passa o ponto onde o piso da v3 morde
+     — os outros (18 a 120 ms, mesmo com os sliders nos extremos) dão o mesmo double com
+     e sem piso. A v3 fica exactamente como foi validada. */
+  const ema = SENS.speechV4 > 0 ? rigEmaLongo : rigEmaA;
+
+  /* o `|| 0` é o que impede um blendshape em falta de envenenar o One Euro: o `rigClamp`
+     deixa passar o NaN, e o filtro não tem por onde o largar (o `st.x === null` só apanha
+     o primeiro frame) — um único frame mau prendia a boca em NaN para o resto da sessão */
+  const jf = rigOneEuro(v.jf, rigClamp(bs.jawOpen || 0, 0, 1), dt, K.euro);
+  const cf = rigOneEuro(v.cf, rigClamp(bs.mouthClose || 0, 0, 1), dt, K.euro);
 
   /* abertura pelo blendshape, com o mouthClose descontado no sítio certo, e pelos
      landmarks — fica a maior, como na v1: um apanha o que o outro falha */
@@ -1304,8 +1384,8 @@ function rigSpeechV3(bs, sig, calib, SENS, dt, pucker, smile, mouthR, auMix, auA
      fechada — que era o que faltava à v1 para não travar a fala normal. */
   const oc = rigClamp(2 * Math.max(0, cf - 0.5 * jf - K.ocDead) +
     0.5 * ((bs.mouthRollLower || 0) + (bs.mouthRollUpper || 0)) +
-    0.4 * (bs.mouthPressLeft + bs.mouthPressRight), 0, 1);
-  v.oc += (oc - v.oc) * rigEmaA(dt, oc > v.oc ? K.ocAtkMs : K.ocRelMs);
+    0.4 * ((bs.mouthPressLeft || 0) + (bs.mouthPressRight || 0)), 0, 1);
+  v.oc += (oc - v.oc) * ema(dt, oc > v.oc ? K.ocAtkMs : K.ocRelMs);
 
   v.ap = ap;   /* guardado só para o debug: com `ap` alto e a boca fechada, quem fecha é a oclusão */
   /* a mistura do microfone entra aqui e só aqui: na abertura crua, ANTES da oclusão e
@@ -1324,15 +1404,16 @@ function rigSpeechV3(bs, sig, calib, SENS, dt, pucker, smile, mouthR, auMix, auA
   /* os sliders continuam a fazer o que dizem: `reactivity` encurta as duas
      constantes, `fecho` só a de descida — como na v1, mas agora em ms */
   const tau = (alvo > sig.mouth ? K.atkMs : K.relMs / SENS.closeSpeed) / SENS.smooth;
-  sig.mouth += (alvo - sig.mouth) * rigEmaA(dt, tau);
+  sig.mouth += (alvo - sig.mouth) * ema(dt, tau);
   sig.press = v.oc;
 
   /* E vs sorriso: quem fala a sorrir tem um sorriso *lento* por baixo; o "eee" é um
      evento por cima dele. A baseline de 2 s separa os dois, e o gate por abertura
      impede que um sorriso de boca fechada roube altura às vogais. */
-  v.smile += (smile - v.smile) * rigEmaA(dt, 2000);
+  /* (é este o tau que o piso do `rigEmaA` satura, e a única diferença medível da v4) */
+  v.smile += (smile - v.smile) * ema(dt, 2000);
   const gate = rigClamp((ap - K.eGateLo) / (K.eGateHi - K.eGateLo), 0, 1);
-  sig.smileW += (rigClamp(Math.max(0, smile - v.smile) * 1.8, 0, 1) * gate - sig.smileW) * rigEmaA(dt, 60);
+  sig.smileW += (rigClamp(Math.max(0, smile - v.smile) * 1.8, 0, 1) * gate - sig.smileW) * ema(dt, 60);
 }
 
 function createSig() {
@@ -1422,7 +1503,9 @@ function processLandmarks(lm, bs, sig, cal, SENS, dtMs, au) {
     const press = rigClamp(bs.mouthClose + (bs.mouthPressLeft + bs.mouthPressRight) / 2, 0, 1);
     const pucker = rigClamp(bs.mouthPucker, 0, 1);
     const smile = (bs.mouthSmileLeft + bs.mouthSmileRight) / 2;
-    const v3 = SENS.speechV3 > 0;
+    /* a v4 é a v3 com outro filtro, e entra pela mesma porta: quem a grave sozinha (uma
+       config à mão, um backup antigo por cima) cai na cadeia certa na mesma */
+    const v3 = SENS.speechV3 > 0 || SENS.speechV4 > 0;
     sig.funnel += (rigClamp(bs.mouthFunnel, 0, 1) - sig.funnel) * 0.4;
     /* microfone: mesma mistura para as três cadeias, calculada uma vez. Com o slider
        a 0 (omissão) ou sem microfone vivo, `auMix` fica 0 e o caminho é o de sempre.
@@ -1438,6 +1521,17 @@ function processLandmarks(lm, bs, sig, cal, SENS, dtMs, au) {
         auMix = rigClamp(SENS.audioMix * au.conf, 0, 1);
       }
       if (auForma) rigAudioShape(sig, au.bandas, nivel, dt);
+      /* microfone vivo mas sem espectro, com a dose de forma ligada: a forma larga */
+      else if (sig.au && SENS.audioVisemes > 0) rigAudioLargaForma(sig.au, dt);
+    } else if (sig.au) {
+      /* Sem microfone vivo neste frame — `conf` a zero, `au` ausente, a permissão
+         revogada a meio — o estado do áudio LARGA. Congelado, o último `round` ficava
+         colado ao `sig.au` e o solver continuava a lê-lo: com o microfone a morrer a
+         meio de um "ooo", medi o `round` preso em 0.833 e o peso do "O" em 0.66 para
+         sempre, com a boca do avatar presa na pose. Sem áudio nenhum o `sig.au` é nulo
+         e isto não corre — é a garantia de que o caminho de sempre não muda. */
+      rigAudioLargaNivel(sig.au, dt);
+      rigAudioLargaForma(sig.au, dt);
     }
     if (v3) {
       rigSpeechV3(bs, sig, calib, SENS, dt, pucker, smile, mouthR, auMix, auAlvo);
@@ -1927,7 +2021,10 @@ function drawModel(ctx, model, sig, SENS, frozen) {
    exactamente a cadeia de antes — o primeiro nem lê o espectro, o segundo devolve o
    span fixo. `maxJaw`/`maxLip` não são sliders: são a medição do botão `calibrar
    máximo`, e vivem aqui porque são da cara de quem usa, como as outras. */
-const SENS_DEFAULTS = { mouthGain: 1, mouthWidth: 1, openHeight: 1, puckerFx: 1, visemeE: 0, closeSpeed: 1, gazeGain: 1, blinkGain: 1, headGain: 1, headMove: 1, sphere: 1, lean: 1, smooth: 1, speechV2: 0, speechV3: 0, speechAuto: 0, audioMix: 0, audioVisemes: 0, maxJaw: 0, maxLip: 0 };
+/* `speechV4` grava-se SEMPRE com `speechV3` a 1 (é a mesma cadeia, outro filtro): assim
+   a hierarquia é v4 > v3 > v2 > v1 na leitura, e quem só olha para o `speechV3` — o
+   debug da rig-page, uma config antiga — continua a ver a verdade. */
+const SENS_DEFAULTS = { mouthGain: 1, mouthWidth: 1, openHeight: 1, puckerFx: 1, visemeE: 0, closeSpeed: 1, gazeGain: 1, blinkGain: 1, headGain: 1, headMove: 1, sphere: 1, lean: 1, smooth: 1, speechV2: 0, speechV3: 0, speechV4: 0, speechAuto: 0, audioMix: 0, audioVisemes: 0, maxJaw: 0, maxLip: 0 };
 /* ---------- favoritos (localStorage, partilhados pelas três páginas) ---------- */
 const FAVS_KEY = 'critter-favs';
 const FAVS_MAX = 60;

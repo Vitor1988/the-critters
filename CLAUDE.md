@@ -32,10 +32,16 @@ step: os ficheiros são o artefacto.
   gerados. Traits novos entram fora dos pesos (como as 8 paletas novas e a boca `rigged`):
   aparecem no studio, nunca no sorteio.
 - **O rig nunca identifica peças pela cor.** As peças da boca são marcadas no `buildModel`
-  (`part: lip|hole|teeth|tongue|throat|rigMouth`). A paleta noir tem `teeth === line`, e a
-  versão antiga tratava os dentes como buraco da boca.
+  (`part: lip|hole|teeth|tongue|throat`) e a boca do rig no `buildRig` (`part: mouthRig`).
+  A paleta noir tem `teeth === line`, e a versão antiga tratava os dentes como buraco da
+  boca.
 - **A abertura de qualquer boca vem dos visemes** (`rigVisemeDrive`) — não há caminho
-  alternativo de abrir/fechar.
+  alternativo de abrir/fechar. E vem do **vídeo**: o microfone escreve forma
+  (`audioVisemes`) e nível (`audioMix`), nunca abertura por si — o `amount` conta só o
+  `own` dos pesos de vídeo, e o contributo do áudio passa pelo veto da oclusão.
+- **A fala tem quatro cadeias** (`v1` por omissão, `speechV2`/`speechV3`/`speechV4`): a v4
+  é a v3 com o EMA sem o piso de 0.02, que saturava os taus longos. Grava-se sempre com
+  `speechV3` a 1 também — é a mesma cadeia, e o debug do rig-page lê o `speechV3`.
 - **Há uma só boca no rig**, para os 11 estilos: cada um entra como linha de repouso (a
   sua boca fechada) + dois ajustes em `RIG_MOUTH_STYLE`. Estilo novo = mais uma linha
   nessa tabela, não mais um caminho de código.

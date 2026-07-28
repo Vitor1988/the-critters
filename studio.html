@@ -102,7 +102,7 @@ button.rec-on{background:#c0261e}
       <summary>sensibilidade</summary>
       <div class="p-row p-check"><label><input type="checkbox" id="cfg-sens-local"> afinação só deste avatar</label></div>
       <div class="p-row"><span>fala</span><select id="cfg-fala"></select></div>
-      <div class="p-row p-check"><label><input type="checkbox" id="cfg-fala-auto"> auto range (só na v3)</label></div>
+      <div class="p-row p-check"><label><input type="checkbox" id="cfg-fala-auto"> auto range (só na v3/v4)</label></div>
       <div id="sliders"></div>
     </details>
   </details>
@@ -150,14 +150,19 @@ const localChk = document.getElementById('cfg-sens-local');
 const falaSel = document.getElementById('cfg-fala');
 const falaAutoChk = document.getElementById('cfg-fala-auto');
 
-/* As três cadeias da boca, para A/B ao vivo. As chaves gravadas não mudam — o select
-   escreve o mesmo par {speechV2, speechV3} que já existia, e uma configuração antiga
-   com speechV2:1 reaparece aqui como v2 sem conversão nenhuma.
+/* As quatro cadeias da boca, para A/B ao vivo. Nenhuma chave gravada muda de significado
+   — o select escreve o {speechV2, speechV3} de sempre mais o `speechV4` novo, e uma
+   configuração antiga com speechV2:1 reaparece aqui como v2 sem conversão nenhuma.
      v1  a cadeia validada na cara dele; é o que continua por omissão
      v2  liberta o teto do press (ver o comentário no engine)
      v3  cadeia nova: mouthClose com a semântica do ARKit, oclusão M/B/P própria e
-         filtros em ms — afinada em vídeo real (tools/), por confirmar ao vivo */
-const FALA = [['v1', 0, 0], ['v2', 1, 0], ['v3 (experimental)', 0, 1]];
+         filtros em ms — afinada em vídeo real (tools/), por confirmar ao vivo
+     v4  a v3 com os filtros exactos: o EMA da v3 tem um piso que satura os taus longos
+         e faz a baseline do sorriso valer 827 ms a 60 fps e 2000 ms a 20 — a v4 tira-o.
+         Grava speechV3 TAMBÉM a 1 (é a mesma cadeia): a v3 é que decide o caminho, e
+         quem só lê o speechV3 — o debug do rig-page — continua a dizer a verdade. */
+const FALA = [['v1', 0, 0, 0], ['v2', 1, 0, 0], ['v3 (experimental)', 0, 1, 0],
+              ['v4 (experimental)', 0, 1, 1]];
 FALA.forEach(([nome], i) => falaSel.add(new Option(nome, i)));
 
 /* grava como qualquer sensibilidade, global ou só deste avatar */
@@ -173,8 +178,8 @@ function gravaSens(o) {
 }
 
 falaSel.addEventListener('change', () => {
-  const [, v2, v3] = FALA[+falaSel.value];
-  gravaSens({ speechV2: v2, speechV3: v3 });
+  const [, v2, v3, v4] = FALA[+falaSel.value];
+  gravaSens({ speechV2: v2, speechV3: v3, speechV4: v4 });
   falaAutoChk.disabled = !v3;
 });
 
@@ -232,11 +237,11 @@ function syncPanel(p) {
   mouthSel.value = cfg.traits && cfg.traits.mouth !== undefined ? cfg.traits.mouth : t.mouth;
   bgInput.value = p.pal.bg;
   localChk.checked = !!p.sensLocal;
-  /* a v3 manda sobre a v2 se ambas aparecerem gravadas (não deve acontecer, mas uma
-     config à mão pode tê-lo) */
-  falaSel.value = p.SENS.speechV3 > 0 ? 2 : p.SENS.speechV2 > 0 ? 1 : 0;
+  /* hierarquia v4 > v3 > v2 > v1 se mais do que uma aparecer gravada (não deve
+     acontecer — a v4 grava as duas de propósito — mas uma config à mão pode tê-lo) */
+  falaSel.value = p.SENS.speechV4 > 0 ? 3 : p.SENS.speechV3 > 0 ? 2 : p.SENS.speechV2 > 0 ? 1 : 0;
   falaAutoChk.checked = !!p.SENS.speechAuto;
-  falaAutoChk.disabled = !(p.SENS.speechV3 > 0);
+  falaAutoChk.disabled = !(p.SENS.speechV3 > 0 || p.SENS.speechV4 > 0);
   for (const [key] of SLIDERS) {
     document.getElementById('s-' + key).value = p.SENS[key];
     document.getElementById('v-' + key).textContent = p.SENS[key].toFixed(2);
@@ -264,8 +269,16 @@ bgInput.addEventListener('input', e => {
 /* trocar o âmbito: passar a global apaga o override deste avatar e recarrega */
 localChk.addEventListener('change', () => {
   const c = loadCritterCfg(page.id);
-  if (localChk.checked) c.sens = Object.assign({}, page.SENS);
-  else delete c.sens;
+  if (localChk.checked) {
+    /* o máximo pessoal fica DE FORA da cópia: é a medição desta cara nesta câmara, e o
+       cfg do avatar viaja no exportar e na sincronização — no telemóvel a lente é outra
+       e o número certo lá é outro (ver `resolveSens` no engine, que o reescreve sempre
+       na leitura; isto é para ele nem chegar a ser gravado) */
+    const s = Object.assign({}, page.SENS);
+    delete s.maxJaw;
+    delete s.maxLip;
+    c.sens = s;
+  } else delete c.sens;
   saveCritterCfg(page.id, c);
   page.loadCritter(page.id);
 });
