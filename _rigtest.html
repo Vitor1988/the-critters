@@ -38,7 +38,13 @@ const SETS = {
     ['left',       { yaw: -1.2, hx: -0.8, gx: -1 }],
     ['right+tilt', { yaw: 1.2, hx: 0.8, roll: 0.5, gx: 1 }],
     ['tilt',       { roll: -0.8 }]
-  ]
+  ],
+  /* construído DA tabela do engine: a folha mostra o que o motor faz, não uma cópia dos
+     números. Cada emoção aparece em repouso e a falar (`mouth: 0.7`) ao lado — a pergunta
+     é exactamente essa, se a boca continua a abrir com a emoção ligada. */
+  emo: [['rest', {}]].concat(RIG_EMO_ORDEM.reduce((cols, nome) => cols.concat(
+    [[nome, RIG_EMOCOES[nome]], [nome + '+fala', Object.assign({ mouth: 0.7 }, RIG_EMOCOES[nome])]]
+  ), []))
 };
 const q = new URLSearchParams(location.search);
 const POSES = SETS[q.get('set') || 'mouth'];

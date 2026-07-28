@@ -83,6 +83,11 @@ function startRigPage(opts) {
   }
 
   const sig = createSig();
+  /* emoção ligada à mão (teclas 1-4): estado de sessão e mais nada. Não vai ao SENS —
+     que o `resolveSens` reescreve a cada `loadCritter` — nem ao cfg nem ao sync: é de
+     quem está a atuar, não do bicho. Mesmo padrão do `debugMode` e do `maxCal`. */
+  const emo = createEmo();
+  let emoLast = -1;
   let cal = createCalib();
   let tracking = false;
   const mouse = { x: 0, y: 0, down: false };
@@ -100,6 +105,9 @@ function startRigPage(opts) {
     if (e.keyCode === 76) loadCritter(randomId());
     else if (e.keyCode === 83) savePng();
     else if (e.keyCode === 68) { debugMode = !debugMode; if (!debugMode) setStatus(lastStatus); }
+    /* 1-4: as emoções, pela ordem do `RIG_EMO_ORDEM`. Sem modificadores — o Cmd/Ctrl+1
+       do browser é trocar de separador, e este listener está na window. */
+    else if (e.keyCode >= 49 && e.keyCode <= 52 && !e.metaKey && !e.ctrlKey && !e.altKey) setEmo(RIG_EMO_ORDEM[e.keyCode - 49]);
   });
 
   let landmarker = null;
@@ -363,6 +371,15 @@ function startRigPage(opts) {
       applyIdle(sig, { x: mouse.x - r.left, y: mouse.y - r.top, down: mouse.down }, W, H, idleState);
     }
 
+    /* a rampa da emoção corre no tempo de DESENHO e não no `dt` da detecção: o `lastNow`
+       só avança quando há cara (sem cara a rampa ficava congelada a meio) e em mobile a
+       detecção corre de dois em dois frames — 250 ms de subida têm de ser 250 ms no
+       relógio de quem está a ver. O tecto é o mesmo do `dt` e pela mesma razão: um
+       separador em segundo plano devolve saltos de segundos. */
+    const dtEmo = emoLast < 0 ? 16.7 : Math.min(250, now - emoLast);
+    emoLast = now;
+    const emoW = rigEmoApply(emo, sig, dtEmo);
+
     if (debugMode) {
       descEl.textContent = 'blinkL ' + sig.blinkL.toFixed(2) + ' · blinkR ' + sig.blinkR.toFixed(2) +
         ' · jaw ' + sig.mouth.toFixed(2) + ' · yaw ' + sig.yaw.toFixed(2) + ' · pitch ' + sig.pitch.toFixed(2) +
@@ -391,7 +408,11 @@ function startRigPage(opts) {
         ((api.SENS.maxJaw > 0 || api.SENS.maxLip > 0) && cal.ready
           ? ' · span ' + rigSpan(RIG_JAW_SPAN, api.SENS.maxJaw, cal.ready.jaw).toFixed(2) +
             '/' + rigSpan(RIG_LIP_SPAN, api.SENS.maxLip, cal.ready.mouth).toFixed(3)
-          : '');
+          : '') +
+        /* a emoção aparece enquanto estiver a mexer alguma coisa — o peso conta também a
+           descida, portanto vê-se a rampa a apagar-se depois de largar. O `—` é para esse
+           bocado: aí já não há emoção ativa e o peso ainda não é zero. */
+        (emoW > 0 ? ' · emo ' + (emo.ativo || '—') + ' ' + emoW.toFixed(2) : '');
     }
 
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
@@ -630,6 +651,42 @@ function startRigPage(opts) {
   api.renderFavs = renderFavs;
 
   if (favBtn) favBtn.addEventListener('click', () => { toggleFav(api.id); renderFavs(); });
+
+  /* ---------- emoções: os toggles 1-4 ----------
+     Latch, como as expression hotkeys dos VTubers: a mesma tecla desliga, outra troca.
+     Vivem só nesta sessão — não há nada para gravar nem para sincronizar. */
+  const emoBar = document.getElementById('emos');
+  let statusAntesEmo = '';
+
+  function renderEmos() {
+    if (!emoBar) return;
+    for (const b of emoBar.children) b.classList.toggle('on', b.dataset.emo === emo.ativo);
+  }
+
+  function setEmo(nome) {
+    /* guarda-se o que a barra dizia antes de a primeira emoção lhe passar por cima, para
+       lho devolver ao largar — o mesmo que o `statusBeforeRec` faz na gravação */
+    if (!emo.ativo) statusAntesEmo = lastStatus;
+    const ativo = rigEmoToggle(emo, nome);
+    renderEmos();
+    setStatus(ativo ? 'emoção: ' + ativo + ' — a mesma tecla desliga'
+      : (statusAntesEmo || (tracking ? 'tracking — express yourself' : 'mouse mode')));
+  }
+  api.setEmo = setEmo;
+  api.emo = emo;
+
+  /* a página pode não ter a barra (o studio tem o seu painel) — as teclas continuam a
+     funcionar sem ela */
+  if (emoBar) {
+    RIG_EMO_ORDEM.forEach((nome, i) => {
+      const b = document.createElement('button');
+      b.className = 'fav-chip';
+      b.dataset.emo = nome;
+      b.textContent = (i + 1) + ' ' + nome;
+      b.addEventListener('click', () => setEmo(nome));
+      emoBar.appendChild(b);
+    });
+  }
 
   const recBtn = document.getElementById('btn-rec');
   if (recBtn) {

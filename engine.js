@@ -1642,6 +1642,88 @@ function applyIdle(sig, mouse, W, H, st) {
 }
 
 /* --------------------------------------------------------------------------
+   Emoções — um overlay de sessão, entre o tracker e o applyRig.
+   Escreve nos seis canais de expressão do sig (os mesmos que o processLandmarks
+   escreve) e em mais nenhum: a abertura (mouth/press/pucker/funnel/mouthW/jawX), o
+   pestanejo, o gaze e a cabeça ficam intactos. A fala continua a vir dos visemes; a
+   emoção é a cara em volta — é por isso que dá para falar zangado.
+   Os números estão presos às arestas medidas do applyRig:
+     · expr -0.50 deixa 47.6% do curso do queixo ((1-0.5)/1.05); a -1 deixava ZERO,
+       que é fala invisível
+     · wide 0.55 mantém o pestanejo legível — olho fechado a 16.5% do aberto
+       ((0.05+0.55*0.25)/(1+0.55*0.25)); a 1 dava 24% e apagava-o
+   -------------------------------------------------------------------------- */
+const RIG_EMOCOES = {
+  feliz:    { joy: 0.85, expr:  0.70 },
+  triste:   { sad: 0.85, expr: -0.50 },
+  surpresa: { surprise: 0.90, wide: 0.55, expr: -0.20 },
+  zangado:  { anger: 0.90, expr: -0.35 }
+};
+/* a ordem é a dos chips e a das teclas 1-4 */
+const RIG_EMO_ORDEM = ['feliz', 'triste', 'surpresa', 'zangado'];
+/* sobe depressa (o gesto tem de ler-se), larga devagar (o regresso à cara é que não pode
+   dar solavanco). Em ms e não em frames: a rampa é visual, não é do tracker. */
+const RIG_EMO = { subirMs: 250, descerMs: 450 };
+/* os únicos canais que a emoção escreve */
+const RIG_EMO_CANAIS = ['joy', 'sad', 'surprise', 'anger', 'wide', 'expr'];
+
+function createEmo() {
+  const pesos = {};
+  for (const nome of RIG_EMO_ORDEM) pesos[nome] = 0;
+  /* `base` é a cara por baixo do overlay, `escrito` o que lá deixámos — ver o rigEmoApply */
+  return { ativo: null, pesos, base: {}, escrito: {} };
+}
+
+/* latch: a mesma desliga, outra troca; um nome desconhecido não faz nada.
+   Devolve a emoção activa, ou null. */
+function rigEmoToggle(emo, nome) {
+  /* hasOwnProperty e não leitura directa: `'__proto__'` ou `'toString'` vêm da cadeia
+     de protótipos e não são emoções */
+  if (Object.prototype.hasOwnProperty.call(RIG_EMOCOES, nome)) emo.ativo = emo.ativo === nome ? null : nome;
+  return emo.ativo;
+}
+
+/* Devolve o peso total da mistura, 0-1 (0 = nenhuma emoção a pesar).
+   A rampa é LINEAR em ms e não um EMA: 250 ms têm de ser 250 ms, e o 0 e o 1 saem
+   exactos por construção — sem epsilon, portanto "desligado" é literalmente o caminho de
+   sempre, sem um único double escrito. O smoothstep entra só no peso da mistura, para as
+   pontas não terem esquina. */
+function rigEmoApply(emo, sig, dtMs) {
+  const dt = dtMs > 0 ? dtMs : 16.7;
+  const suave = {};
+  let soma = 0;
+  for (const nome of RIG_EMO_ORDEM) {
+    const sobe = emo.ativo === nome;
+    const passo = dt / (sobe ? RIG_EMO.subirMs : RIG_EMO.descerMs);
+    const w = sobe ? Math.min(1, emo.pesos[nome] + passo) : Math.max(0, emo.pesos[nome] - passo);
+    emo.pesos[nome] = w;
+    suave[nome] = w * w * (3 - 2 * w);
+    soma += suave[nome];
+  }
+  if (soma === 0) return 0;
+
+  /* uma emoção sozinha a fundo dá k = 1 e o canal fica EXACTAMENTE no valor do preset —
+     é isso que prende as contas de cima; a duas em transição a soma passa de 1 e o k
+     trava, que a mistura não pode ir além da substituição total */
+  const k = Math.min(1, soma);
+  for (const canal of RIG_EMO_CANAIS) {
+    /* média ponderada dos presets: ao trocar, as duas pesam ao mesmo tempo e o expr passa
+       pelo zero — a cara faz a curva pelo neutro em vez de saltar de uma forma para a outra */
+    let alvo = 0;
+    for (const nome of RIG_EMO_ORDEM) alvo += suave[nome] * (RIG_EMOCOES[nome][canal] || 0);
+    alvo /= soma;
+    /* A base é a cara por baixo. Se o canal está exactamente como o deixámos, ninguém lhe
+       tocou desde então (modo rato: o applyIdle não escreve estes seis) e a base continua
+       a ser a de sempre — é isto que faz a emoção LARGAR em vez de ficar colada no preset.
+       Com o tracker a escrever, a base é o valor fresco dele e o EMA retoma sem salto. */
+    const base = Object.is(sig[canal], emo.escrito[canal]) ? emo.base[canal] : sig[canal];
+    emo.base[canal] = base;
+    sig[canal] = emo.escrito[canal] = base + (alvo - base) * k;
+  }
+  return k;
+}
+
+/* --------------------------------------------------------------------------
    buildRig — prepara os deformadores a partir do modelo (bind pose).
    Convenções de rigging usadas na boca:
      · os cantos são âncoras: peso 0, nunca se movem com a mandíbula
