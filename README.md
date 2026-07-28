@@ -85,6 +85,17 @@ abrem com a mesma mecânica — cantos ancorados, visemes, budgets medidos na ca
   copiar o desenho de cima e assenta na linha entre os cantos (o budget do queixo conta
   com isso, senão a `mad` — de cantos em baixo — passava a linha do queixo)
 - **sem dentes** — escondidos no modo rig; não há mandíbula a que os prender de forma credível
+- **quatro bocas trocadas** — pelo mesmo motivo, quatro estilos não animam com honestidade:
+  a `tongue` fica com a língua pendurada a bombear com a mandíbula, e a `fangs`/`grin`
+  vivem de dentes que aqui são invisíveis. No rig — e **só** no rig — cada uma tem destino
+  (`RIG_MOUTH_SWAP`): `tongue`/`fangs` → `smile` (desenham o mesmo arco, a linha de repouso
+  é bit a bit igual), `zigzag` → `w` (o vizinho de registo) e `grin` → `open` (o mesmo ramo
+  do `buildRig`, buraco → eixo da elipse). É o padrão que os olhos já usavam. O sorteio, os
+  pesos (`W_MOUTH`), a ordem do `MOUTH_STYLES` e o `index.html` ficam **byte a byte iguais**:
+  as quatro continuam a sair e a desenhar-se no gerativo. A troca acontece depois do merge
+  dos traits, portanto um cfg antigo com uma delas gravada à mão cai nela também — e o
+  seletor do studio deixa de as listar (ficam 8 opções), em vez de oferecer uma boca que a
+  página nunca desenha
 
 ### head pose
 
@@ -674,10 +685,68 @@ trait. Nasce já com a topologia certa:
 
 Vê-la: `_rigtest.html?set=visemes&mouth=11&ids=<id>`.
 
-`_rigtest.html?ids=<id,id,…>&cw=470&set=mouth|head|visemes` desenha a folha de contacto do rig
-(cada critter × as poses do set, com as linhas do nariz e do queixo a vermelho). `set=head`
-cobre as poses de cabeça e `set=visemes` as vogais + a oclusão M. É a forma rápida de ver o
-efeito de uma alteração ao rig sem câmara — serve por http tal como as outras páginas.
+### emoções — os botões 1-4 (só nesta sessão)
+
+Quatro emoções que se ligam a meio da fala, como as *expression hotkeys* dos VTubers:
+chips por baixo dos botões e teclas **1-4**. São um **overlay de sessão** — vivem entre o
+tracker e o `applyRig`, não passam pelo SENS nem pelo cfg, não se gravam em lado nenhum e
+mudar de critter não as desliga (são de quem actua, não do bicho).
+
+| tecla | emoção | o que escreve |
+|---|---|---|
+| 1 | `feliz` | `joy 0.85`, `expr 0.70` |
+| 2 | `triste` | `sad 0.85`, `expr -0.50` |
+| 3 | `surpresa` | `surprise 0.90`, `wide 0.55`, `expr -0.20` |
+| 4 | `zangado` | `anger 0.90`, `expr -0.35` |
+
+Os presets escrevem **seis canais de expressão** e mais nenhum: `joy`, `sad`, `surprise`,
+`anger`, `wide` (olhos e sobrancelhas) e `expr` (a curva dos cantos da boca). A abertura —
+`mouth`, `press`, `pucker`, `funnel`, `mouthW`, `jawX` — o pestanejo, o gaze e a cabeça
+ficam intactos, bit a bit. **A boca continua a abrir pelos visemes**, que é o que faz com
+que dê para *falar* zangado em vez de ficar com uma careta congelada.
+
+Os números não são gosto, são as arestas medidas do `applyRig`:
+
+- **`expr -0.50` deixa 47.6% do curso do queixo** — o `applyRig` desconta o *frown* ao
+  budget de descida (`(1 - |expr|)/1.05`), portanto a `-1` sobrava **zero** e a fala ficava
+  invisível. Medido: com `mouth: 1`, o `jawDrop` passa de 19.8 para 9.9 px — metade do
+  curso, e nunca menos de 35% dele
+- **`wide 0.55` mantém o pestanejo legível** — o olho fechado fica a **16.5%** do aberto
+  (`(0.05 + 0.55·0.25)/(1 + 0.55·0.25)`); a `1` subia para 24% e o piscar deixava de se ler
+- **`expr > 0` não custa queixo nenhum** — o `jawDrop` fica igual à décima de pixel; o que
+  o sorriso disputa é o espaço do lábio **de cima**, e a `0.70` a abertura total no centro
+  perde ~33% (média de 30 IDs, `mouth: 1`). Fala com o queixo, sorri com os cantos
+
+**Rampa linear em ms, não um EMA**: 250 ms a subir (o gesto tem de ler-se), 450 ms a largar
+(o regresso à cara é que não pode dar solavanco). Linear porque 250 ms têm de ser 250 ms em
+qualquer cadência, e porque o 0 e o 1 saem exactos por construção — sem epsilon, "desligado"
+é literalmente o caminho de sempre: com peso zero o `rigEmoApply` devolve `0` sem escrever
+um único `double`. O *smoothstep* entra só no peso da mistura, para as pontas não terem
+esquina. É uma mudança de **forma** — os cantos a curvarem —, nunca um crossfade entre dois
+desenhos.
+
+**Latch**: a mesma tecla desliga, outra troca. A trocar, as duas pesam ao mesmo tempo e o
+valor final é a média ponderada dos presets, portanto ao ir de `1` para `2` o `expr` **passa
+pelo zero** — a cara faz a curva pelo neutro em vez de saltar de uma forma para a outra.
+
+Ao largar, o canal volta à cara por baixo: o `rigEmoApply` guarda a base e o que lá deixou,
+e se ninguém tocou no canal entretanto (modo rato — o `applyIdle` não escreve estes seis)
+continua a misturar a partir da base. Sem isso o preset era um ponto fixo e a cara ficava
+colada, feliz para sempre. Com o tracker a escrever, o EMA dele retoma sem salto.
+
+**O que isto tem de honesto**: com a fala `v3`/`v4`, a *baseline* do sorriso não sabe da
+emoção. Um `feliz` sustentado ~2 s entra na `v.smile`, e o `smileW` — o viseme E, as fendas
+do "eee" — adormece enquanto a emoção estiver ligada. É esperado e está documentado; a `v1`
+(a de omissão) não tem essa baseline e não sofre disto.
+
+Vê-las sem câmara: `_rigtest.html?set=emo&ids=<id>` — cada emoção em repouso e a falar
+(`mouth: 0.7`) na coluna ao lado, construídas da própria tabela do engine.
+
+`_rigtest.html?ids=<id,id,…>&cw=470&set=mouth|head|visemes|emo` desenha a folha de contacto do
+rig (cada critter × as poses do set, com as linhas do nariz e do queixo a vermelho). `set=head`
+cobre as poses de cabeça, `set=visemes` as vogais + a oclusão M e `set=emo` as quatro emoções.
+É a forma rápida de ver o efeito de uma alteração ao rig sem câmara — serve por http tal como
+as outras páginas.
 
 ## Ficheiros
 

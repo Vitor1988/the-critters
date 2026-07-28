@@ -45,6 +45,16 @@ step: os ficheiros são o artefacto.
 - **Há uma só boca no rig**, para os 11 estilos: cada um entra como linha de repouso (a
   sua boca fechada) + dois ajustes em `RIG_MOUTH_STYLE`. Estilo novo = mais uma linha
   nessa tabela, não mais um caminho de código.
+- **Quatro bocas só existem no gerativo.** A `tongue`, a `fangs`, a `zigzag` e a `grin` são
+  substituídas no `buildModel` (`RIG_MOUTH_SWAP`) quando — e só quando — vem `opts.rig`,
+  como já acontecia com os olhos. O sorteio, o `W_MOUTH`, a ordem do `MOUTH_STYLES` e o
+  `index.html` ficam intactos; o studio não as lista e o `syncPanel` mostra o destino se
+  um cfg antigo as tiver gravadas.
+- **As emoções são um overlay de sessão** (`RIG_EMOCOES`/`rigEmoApply`): escrevem os seis
+  canais de expressão (`joy`, `sad`, `surprise`, `anger`, `wide`, `expr`) entre o tracker e
+  o `applyRig`, e mais nenhum — nunca a abertura (essa é dos visemes), o pestanejo, o gaze
+  ou a cabeça. Nunca são gravadas (nem no SENS, nem no cfg, nem no sync) e o `loadCritter`
+  não as desliga. Com peso zero o `rigEmoApply` não escreve um único double.
 - **As sensibilidades são globais** (`critter-sens`), com override opcional por avatar em
   `cfg.sens` — são da cara de quem usa, não do bicho.
 - **A boca não sai da cara por construção**, não por um limite fixo: os budgets de abertura
@@ -61,7 +71,7 @@ step: os ficheiros são o artefacto.
 `_rigtest.html` desenha uma grelha de critters × poses, com as linhas do nariz e do queixo:
 
 ```
-_rigtest.html?set=mouth|head|visemes&cw=470&ids=<id,id,…>[&mouth=11][&visemes=1]
+_rigtest.html?set=mouth|head|visemes|emo&cw=470&ids=<id,id,…>[&mouth=11][&visemes=1]
 ```
 
 Servir por http (`python3 -m http.server`) e abrir. Para verificação numérica do rig
