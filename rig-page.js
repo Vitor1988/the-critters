@@ -65,6 +65,12 @@ function startRigPage(opts) {
     const fg = luminance(api.pal.bg) >= 128 ? '#000' : '#fff';
     titleEl.style.color = fg; descEl.style.color = fg;
     setStatus(tracking ? (cal.ready ? 'tracking — express yourself' : 'calibrating — look neutral at the camera…') : lastStatus);
+    /* trocar de avatar troca as sensibilidades (`resolveSens`), e o microfone segue-as:
+       se o novo tem os dois controlos de áudio a zero, larga-se já — deixá-lo aberto
+       era manter o indicador de gravação do browser aceso a dizer o contrário dos
+       controlos. Só o lado de largar: pedir o microfone tem de ficar preso ao gesto
+       do utilizador (`ajustaAudio`), fora dele o getUserMedia pode nem ser aceite. */
+    if (!(api.SENS.audioMix > 0 || api.SENS.audioVisemes > 0) && auEstado !== 'off') desligarAudio();
     renderMax();
     if (api.renderFavs) api.renderFavs();
     if (opts.onLoad) opts.onLoad(api);
@@ -149,49 +155,103 @@ function startRigPage(opts) {
   const auRef = { db: -100, conf: 0, bandas: null };   /* reutilizado, não se aloca um por frame */
   const auBandas = new Float64Array(7);
   let auCtx = null, auAnalyser = null, auStream = null, auBuf = null, auEsp = null, auEstado = 'off';
+  /* uma cadeia de `ligarAudio` tem dois `await` pelo meio, e o utilizador continua a
+     mexer no slider durante esse tempo. O token diz a cada cadeia se ainda é ela a
+     mandar: se mudou, larga o que acabou de obter e não toca no estado. Sem isto,
+     zerar o slider com a permissão pendente deixava o microfone aberto com os
+     controlos a zero, e o zigue-zague no mesmo arrasto abria dois AudioContexts —
+     um deles órfão, e o Chrome só deixa ter ~6 por documento antes de recusar. */
+  let auGen = 0;
+
+  /* fecha o par (stream, contexto) venha de onde vier: tanto o larga uma cadeia que
+     perdeu a corrida como o desligar normal */
+  function largaAudio(stream, ctx) {
+    if (stream) for (const t of stream.getTracks()) t.stop();
+    if (ctx) { try { ctx.close(); } catch (e) {} }
+  }
+
+  /* o áudio não é dono da barra de estado: se a câmara falhou, o que lá está é o
+     diagnóstico dela ("precisa de https… modo rato") e é o que interessa ler —
+     escrever-lhe por cima "a boca segue a voz e a câmara" era falso nas duas metades */
+  function statusAudio(t) {
+    if (tracking) setStatus(t);
+  }
 
   async function ligarAudio() {
-    if (auEstado !== 'off') return;      /* 'a pedir' | 'on' | 'falhou' — não insiste */
+    /* 'a pedir' e 'on' não se repetem. 'falhou' repete-se de propósito: era um beco sem
+       saída — depois de uma negação, voltar a subir o slider não tentava outra vez. O
+       browser lembra-se da permissão negada e responde depressa, não há loop de prompts. */
+    if (auEstado === 'a pedir' || auEstado === 'on') return;
+    const gen = ++auGen;
     auEstado = 'a pedir';
-    setStatus('áudio: à espera da permissão do microfone…');
+    statusAudio('áudio: à espera da permissão do microfone…');
+    let stream = null, ctx = null;
     try {
-      /* o cancelamento de eco e a supressão de ruído ajudam o gate automático (tiram-lhe
-         a ventoinha e o retorno das colunas); o ganho automático fica DE FORA de
-         propósito — normalizava a dinâmica, que é precisamente o sinal que se quer */
-      auStream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false }
+      /* a supressão de ruído ajuda o gate automático (tira-lhe a ventoinha); o
+         cancelamento de eco fica DE FORA porque esta página não reproduz som nenhum —
+         não há eco para cancelar, e o APM do WebRTC traz com ele um passa-alto de
+         ~80 Hz que morde na banda 50–200 Hz, a mais pesada do centroide das vogais.
+         O ganho automático fica de fora por outra razão: normalizava a dinâmica, que
+         é precisamente o sinal que se quer. */
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: true, autoGainControl: false }
       });
-      auCtx = new (window.AudioContext || window.webkitAudioContext)();
-      if (auCtx.state === 'suspended') await auCtx.resume();
-      auAnalyser = auCtx.createAnalyser();
-      auAnalyser.fftSize = 1024;
+      if (gen !== auGen) { largaAudio(stream, null); return; }
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+      if (ctx.state === 'suspended') await ctx.resume();
+      if (gen !== auGen) { largaAudio(stream, ctx); return; }
+      /* um contexto que não arrancou não entrega amostra nenhuma, e ficar 'on' era
+         mentir ao engine: dB de silêncio com confiança 1 dá boca fechada com voz a sair */
+      if (ctx.state !== 'running') {
+        const e = new Error('AudioContext ' + ctx.state);
+        e.name = 'AudioContextParado';
+        throw e;
+      }
+      const analyser = ctx.createAnalyser();
+      /* 2048 e não 1024: o `mediAudio` só vê a última janela do analisador, e a 48 kHz
+         1024 amostras são 21 ms — com a medição a correr de dois em dois frames em
+         mobile, mais de um terço do áudio nunca chegava a ser olhado. 2048 são 43 ms. */
+      analyser.fftSize = 2048;
       /* a suavização do espectro fica a zero: quem suaviza é o engine, em
          milissegundos e com ataque e queda próprios — o 0.8 por omissão da
          AnalyserNode é uma constante por frame, exactamente o que a v3 deixou de
          fazer para não mudar de comportamento entre 30 e 60 fps */
-      auAnalyser.smoothingTimeConstant = 0;
+      analyser.smoothingTimeConstant = 0;
       /* liga-se à fonte e mais nada: encaminhar isto para as colunas era um larsen */
-      auCtx.createMediaStreamSource(auStream).connect(auAnalyser);
-      auBuf = new Float32Array(auAnalyser.fftSize);
-      auEsp = new Float32Array(auAnalyser.frequencyBinCount);
+      ctx.createMediaStreamSource(stream).connect(analyser);
+      auStream = stream; auCtx = ctx; auAnalyser = analyser;
+      auBuf = new Float32Array(analyser.fftSize);
+      auEsp = new Float32Array(analyser.frequencyBinCount);
       auEstado = 'on';
       auRef.conf = 1;
-      setStatus('áudio ligado — a boca segue a voz e a câmara');
+      statusAudio('áudio ligado — a boca segue a voz e a câmara');
     } catch (err) {
+      largaAudio(stream, ctx);
+      /* se entretanto outra cadeia (ou o desligar) assumiu o comando, o estado é dela:
+         esta limpa o que abriu e sai calada */
+      if (gen !== auGen) return;
       desligarAudio();
       auEstado = 'falhou';
       const n = err && err.name ? err.name : '';
-      setStatus('áudio: ' + (n === 'NotAllowedError' ? 'permissão do microfone negada'
-        : n === 'NotFoundError' ? 'não há microfone' : 'não arrancou (' + (n || 'erro') + ')') +
+      statusAudio('áudio: ' + (n === 'NotAllowedError' ? 'permissão do microfone negada'
+        : n === 'NotFoundError' ? 'não há microfone'
+        : n === 'AudioContextParado' ? 'o browser não deixou o áudio arrancar'
+        : 'não arrancou (' + (n || 'erro') + ')') +
         ' — a boca continua só pela câmara');
     }
   }
 
   function desligarAudio() {
-    if (auStream) { for (const t of auStream.getTracks()) t.stop(); auStream = null; }
-    if (auCtx) { try { auCtx.close(); } catch (e) {} auCtx = null; }
+    auGen++;      /* invalida qualquer pedido de microfone ainda pendente */
+    largaAudio(auStream, auCtx);
+    auStream = null; auCtx = null;
     auAnalyser = null; auBuf = null; auEsp = null;
     auRef.conf = 0; auRef.db = -100; auRef.bandas = null;
+    /* o `sig.au` é o estado daquele microfone e daquela sessão: o chão de ruído, o tecto
+       e a mediana de brilho ficariam em unidades de um sinal que já não existe — e a
+       forma congelada sobreviveria ao mic que a produziu. O engine recria-o à primeira
+       utilização do próximo. */
+    sig.au = null;
     auEstado = 'off';
   }
   api.ligarAudio = ligarAudio;
@@ -216,9 +276,13 @@ function startRigPage(opts) {
     if (!(api.SENS.audioVisemes > 0)) { auRef.bandas = null; return; }
     auAnalyser.getFloatFrequencyData(auEsp);
     const df = auCtx.sampleRate / auAnalyser.fftSize;
+    /* floor no início e ceil no fim, não `round` nos dois: o critério é *conter* a gama
+       de frequências pedida, como no `capture.py` da bancada, e não arredondar ao bin
+       mais próximo — com o arredondamento a banda mudava de conteúdo conforme o
+       sampleRate do aparelho (a 44.1 e a 48 kHz o df não é o mesmo) */
     for (let b = 0; b < 7; b++) {
-      const i0 = Math.max(1, Math.round(AU_BANDAS_HZ[b] / df));
-      const i1 = Math.min(auEsp.length, Math.round(AU_BANDAS_HZ[b + 1] / df));
+      const i0 = Math.max(1, Math.floor(AU_BANDAS_HZ[b] / df));
+      const i1 = Math.min(auEsp.length, Math.ceil(AU_BANDAS_HZ[b + 1] / df));
       let p = 0, n = 0;
       for (let i = i0; i < i1; i++) { p += Math.pow(10, auEsp[i] / 10); n++; }
       auBandas[b] = n ? 10 * Math.log10(p / n + 1e-14) : -140;
@@ -232,11 +296,27 @@ function startRigPage(opts) {
      que é o que se espera de controlos a zero.
      A página rigged não tem sliders: usa o que está gravado, como qualquer outra
      sensibilidade. Mas continua a não pedir o microfone no arranque — espera pelo
-     primeiro gesto, que é o mínimo que o browser exige de qualquer maneira. */
+     primeiro gesto, que é o mínimo que o browser exige de qualquer maneira.
+     Além do gesto, corre a cada pointerdown/keydown para apanhar o resto do ciclo de
+     vida: um contexto suspenso a meio da sessão, e uma tentativa nova depois de uma
+     falha. */
   function ajustaAudio() {
     const quer = api.SENS.audioMix > 0 || api.SENS.audioVisemes > 0;
-    if (quer && auEstado === 'off') ligarAudio();
-    else if (!quer && auEstado !== 'off') desligarAudio();
+    if (!quer) { if (auEstado !== 'off') desligarAudio(); return; }
+    /* ligar exige câmara: o `mediAudio` só corre no ramo do loop que tem cara detetada,
+       portanto em modo rato o microfone abria, acendia o indicador de gravação do
+       browser… e ninguém o lia. A zero, o lado de largar acima continua a valer sempre. */
+    if (!tracking) return;
+    if (auEstado === 'off' || auEstado === 'falhou') ligarAudio();
+    /* uma chamada, uma mudança de app no iOS ou um separador que foi para trás suspendem
+       um contexto já ligado, e nada o retomava: a engine passava a ver silêncio com
+       confiança 1. Isto está pendurado no pointerdown/keydown, que é justamente o gesto
+       que o browser exige para retomar. */
+    else if (auEstado === 'on' && auCtx && auCtx.state === 'suspended') {
+      /* isto corre dentro de um listener de pointerdown: uma excepção daqui subia ao
+         window.onerror e pintava a faixa vermelha de erro por causa de um resume */
+      try { Promise.resolve(auCtx.resume()).catch(() => {}); } catch (e) {}
+    }
   }
   api.ajustaAudio = ajustaAudio;
   window.addEventListener('pointerdown', ajustaAudio);
@@ -248,9 +328,13 @@ function startRigPage(opts) {
 
     /* tempo real desde a última passagem pela cadeia — a fala v3 filtra em ms e não
        em frames, e sem isto um telemóvel a 30 fps teria metade da suavização. Preso
-       entre 8 e 50 ms: um separador de browser em segundo plano devolve saltos de
-       segundos, e isso faria a boca dar um estalo ao voltar. */
-    const dt = lastNow < 0 ? 16.7 : Math.min(50, Math.max(8, now - lastNow));
+       entre 8 e 250 ms: um separador de browser em segundo plano devolve saltos de
+       segundos, e isso faria a boca dar um estalo ao voltar. O tecto era de 50 ms e
+       era atingido por construção — em mobile a detecção corre de dois em dois frames,
+       o que a 30 fps dá 66.7 ms reais: os filtros integravam a menos e perdia-se cerca
+       de um quarto do curso silábico. 250 ms ainda mata o estalo e cobre até uma
+       detecção a 4-5 fps. */
+    const dt = lastNow < 0 ? 16.7 : Math.min(250, Math.max(8, now - lastNow));
 
     detTick++;
     if (tracking && landmarker && video.readyState >= 2 && (!IS_MOBILE || detTick % 2 === 0)) {
@@ -369,10 +453,25 @@ function startRigPage(opts) {
          com um await simples a gravação nunca chegava a arrancar e não havia feedback */
       setStatus('à espera da permissão do microfone…');
       try {
-        recAudio = await Promise.race([
-          navigator.mediaDevices.getUserMedia({ audio: true }),
-          new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000))
-        ]);
+        /* se o microfone da análise já está aberto, clona-se a faixa em vez de pedir um
+           segundo: em vários Android o segundo getUserMedia do mesmo aparelho falha, ou
+           rouba o primeiro e a boca deixa de seguir a voz a meio da gravação. O clone é
+           independente — pará-lo no fim não fecha o que a análise está a usar. */
+        const jaAberto = auEstado === 'on' && auStream && auStream.getAudioTracks()[0];
+        if (jaAberto) {
+          recAudio = new MediaStream([jaAberto.clone()]);
+        } else {
+          let perdida = false;
+          const pedido = navigator.mediaDevices.getUserMedia({ audio: true });
+          /* a corrida rejeita ao fim de 8 s mas o pedido continua vivo por baixo: se a
+             permissão só chegar depois, o stream resolvia para ninguém e o microfone
+             ficava aberto até a página fechar. Este `then` é quem o fecha nesse caso. */
+          pedido.then(s => { if (perdida) for (const t of s.getTracks()) t.stop(); }, () => {});
+          recAudio = await Promise.race([
+            pedido,
+            new Promise((_, rej) => setTimeout(() => { perdida = true; rej(new Error('timeout')); }, 8000))
+          ]);
+        }
         for (const t of recAudio.getAudioTracks()) stream.addTrack(t);
       } catch (e) {
         recAudio = null;   /* sem microfone grava-se à mesma, mudo */
@@ -422,6 +521,14 @@ function startRigPage(opts) {
   api.recalibrate = () => {
     cal = createCalib();
     maxCal = null;
+    /* o `cal` não é o único estado medido: os filtros da v3, o pico, a baseline do
+       sorriso e sobretudo o `lo`/`hi` do auto-range estão em unidades do zero que
+       acabou de ser deitado fora — sobreviverem era arrastar a régua velha para a
+       régua nova. O `sig.au` idem: recalibrar é uma sessão de medição nova, e o chão
+       de ruído volta a assentar em segundos. O engine recria os dois à primeira
+       utilização. */
+    sig.v3 = null;
+    sig.au = null;
     if (tracking) setStatus('calibrating — look neutral at the camera…');
   };
 
@@ -477,6 +584,12 @@ function startRigPage(opts) {
     const m = loadRigMax();
     api.SENS.maxJaw = m && m.jaw > 0 ? m.jaw : 0;
     api.SENS.maxLip = m && m.lip > 0 ? m.lip : 0;
+    /* mudar o máximo muda o span, e o span é a unidade em que o estado da v3 está
+       escrito: o `lo`/`hi` do auto-range, o pico e os filtros ficavam a falar da escala
+       anterior e a boca saturava até eles decaírem (~13 s, medido). Isto corre nos dois
+       únicos sítios onde o máximo muda — a medição e o botão a limpar —, que é a razão
+       de estar aqui e não em cada um deles. */
+    sig.v3 = null;
     renderMax();
   }
 
