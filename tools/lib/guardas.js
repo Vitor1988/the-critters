@@ -684,10 +684,434 @@ function assercoesV4(eng) {
   return { saltado: false, linhas };
 }
 
+/* ---------------------------------------------------------------------------
+   IDs sinteticos, deterministicos.
+
+   As duas baterias abaixo medem em criters inteiros e nao no `sig`, portanto
+   precisam de varrer muitos IDs. O `randomId` do engine usa `Math.random`, que aqui
+   nao serve: uma bancada que varre uma amostra diferente a cada corrida nao consegue
+   dizer "isto passou". LCG local, sem dependencia do engine, mesma lista sempre.
+   --------------------------------------------------------------------------- */
+const B36_BANCADA = '0123456789abcdefghijklmnopqrstuvwxyz';
+function idsSinteticos(n) {
+  let s = 20260728 >>> 0;
+  const r = () => (s = (Math.imul(s, 1103515245) + 12345) >>> 0) / 4294967296;
+  const out = [];
+  for (let k = 0; k < n; k++) {
+    let id = '';
+    for (let i = 0; i < 10; i++) id += B36_BANCADA[Math.floor(r() * 36)];
+    out.push(id);
+  }
+  return out;
+}
+
+/* ---------------------------------------------------------------------------
+   Assercoes das bocas trocadas no rig (`RIG_MOUTH_SWAP`).
+
+   Quatro bocas que o gerativo desenha bem e o rig nao anima com honestidade
+   (tongue, fangs, zigzag, grin) passam a ter destino — mas SO no rig. O que aqui se
+   prova e a fronteira, que e a parte que se parte sem ninguem dar por ela:
+
+   · o gerativo tem de ficar byte a byte como estava. O ID mapeia os traits por pesos
+     acumulados: se a troca escorregasse para o caminho sem `rig`, TODOS os IDs ja
+     gerados mudavam de cara. Nao chega verificar que nao mudam — tem de haver IDs da
+     amostra a cair mesmo nas quatro escondidas, senao a assercao passa por a amostra
+     nao ter nenhuma. Sao 56 dos 200, e o numero esta no detalhe de proposito.
+   · do lado do rig, nenhuma pode sobrar — nem por sorteio nem por um `cfg.traits`
+     antigo gravado a mao, que e o caso em que a troca tem de acontecer DEPOIS do
+     merge dos traits (foi essa a decisao, e e esta a assercao que a prende).
+   --------------------------------------------------------------------------- */
+function assercoesBocas(eng) {
+  if (!eng.RIG_MOUTH_SWAP) return { saltado: true, linhas: [] };
+  const linhas = [];
+  const teste = (nome, ok, detalhe) => linhas.push({ nome, ok, detalhe });
+  const SWAP = eng.RIG_MOUTH_SWAP, ESTILOS = eng.MOUTH_STYLES;
+  const escondida = e => Object.prototype.hasOwnProperty.call(SWAP, e);
+
+  /* 1. A TABELA E COERENTE consigo propria: o destino existe, nao e ele proprio
+        escondido (nao ha cadeias: uma troca resolve-se num passo) e nao e a origem. */
+  {
+    const maus = Object.keys(SWAP).filter(k =>
+      ESTILOS.indexOf(k) < 0 || ESTILOS.indexOf(SWAP[k]) < 0 || escondida(SWAP[k]) || SWAP[k] === k);
+    teste('a tabela de trocas e coerente', maus.length === 0,
+      maus.length ? 'maus: ' + maus.join(', ')
+        : Object.keys(SWAP).map(k => k + '->' + SWAP[k]).join(' ') + ' (' +
+          (ESTILOS.length - Object.keys(SWAP).length) + ' estilos sobram no studio)');
+  }
+
+  const IDS = idsSinteticos(200);
+
+  /* 2. O GERATIVO NAO MUDA. `buildModel(id)` sem opcoes e o caminho do `index.html`. */
+  {
+    const difs = IDS.filter(id => eng.buildModel(id).mouth.style !== ESTILOS[eng.parseId(id).mouth]);
+    const naEscondida = IDS.filter(id => escondida(ESTILOS[eng.parseId(id).mouth]));
+    teste('o gerativo nao ve a troca', difs.length === 0 && naEscondida.length > 0,
+      IDS.length + ' IDs identicos ao trait sorteado, ' + naEscondida.length +
+      ' deles numa boca escondida' + (difs.length ? ' — MAS ' + difs.length + ' diferem: ' + difs.slice(0, 3) : ''));
+  }
+
+  /* 3. COM RIG NAO SOBRA NENHUMA, e cada uma vai ao destino da tabela. Por sorteio
+        (os 200 IDs) e a mao (os 12 estilos forcados por `traits`), que sao caminhos
+        diferentes: o segundo passa pelo merge do `opts.traits`. */
+  {
+    const sobra = IDS.filter(id => escondida(eng.buildModel(id, { rig: true }).mouth.style));
+    const erradas = IDS.filter(id => {
+      const g = ESTILOS[eng.parseId(id).mouth];
+      return escondida(g) && eng.buildModel(id, { rig: true }).mouth.style !== SWAP[g];
+    });
+    const forcadas = [];
+    for (let i = 0; i < ESTILOS.length; i++) {
+      const e = eng.buildModel(IDS[0], { rig: true, traits: { mouth: i } }).mouth.style;
+      const esperado = escondida(ESTILOS[i]) ? SWAP[ESTILOS[i]] : ESTILOS[i];
+      if (e !== esperado || escondida(e)) forcadas.push(ESTILOS[i] + '->' + e);
+    }
+    teste('com rig nunca sobra uma boca escondida',
+      sobra.length === 0 && erradas.length === 0 && forcadas.length === 0,
+      sobra.length || erradas.length || forcadas.length
+        ? 'sobram ' + sobra.length + ', destino errado ' + erradas.length + ', forcadas ' + forcadas.join(' ')
+        : IDS.length + ' IDs + os ' + ESTILOS.length + ' estilos forcados, todos no destino da tabela');
+  }
+
+  /* 4. O CFG ANTIGO. Alguem tem `traits: {mouth: 5}` (tongue) gravado no localStorage
+        de quando a boca aparecia no studio. A troca esta DEPOIS do merge, portanto
+        tambem esse cai — e o que se mede nao e so o nome do estilo, e a AUSENCIA das
+        pecas: a lingua e o que ficava pendurada a bombear com a mandibula.
+        O contra-exemplo (sem `rig`, a lingua esta la) e o que impede esta assercao de
+        ser verde por a lingua nunca ter sido desenhada. */
+  {
+    const iT = ESTILOS.indexOf('tongue');
+    const comRig = eng.buildModel(IDS[0], { rig: true, traits: { mouth: iT } });
+    const semRig = eng.buildModel(IDS[0], { traits: { mouth: iT } });
+    const nR = comRig.shapes.filter(sh => sh.part === 'tongue').length;
+    const nS = semRig.shapes.filter(sh => sh.part === 'tongue').length;
+    teste('um cfg antigo com boca escondida cai na troca',
+      comRig.mouth.style === SWAP.tongue && nR === 0 && semRig.mouth.style === 'tongue' && nS > 0,
+      'traits.mouth=' + iT + ': com rig ' + comRig.mouth.style + '/' + nR + ' pecas de lingua, ' +
+      'sem rig ' + semRig.mouth.style + '/' + nS);
+  }
+
+  /* 5. OS 12 CONSTROEM RIG. Um estilo que caia no `buildRig` sem labios nem buraco
+        ficava sem boca nenhuma e so se via ao vivo. Os budgets sao medidos na cara
+        (espaco entre o nariz e o queixo): tem de existir, ser finitos e nao-negativos,
+        e os caps por ponto tem de ser um intervalo (capTop <= capBot). */
+  {
+    const maus = [];
+    for (const id of IDS.slice(0, 12)) for (let i = 0; i < ESTILOS.length; i++) {
+      const model = eng.buildModel(id, { rig: true, traits: { mouth: i } });
+      const M = eng.buildRig(model).mouth;
+      if (!M) { maus.push(ESTILOS[i] + '@' + id + ':sem boca'); continue; }
+      for (const k of ['down', 'up', 'liftUp', 'liftDown', 'halfW']) {
+        if (!isFinite(M[k]) || M[k] < 0) maus.push(ESTILOS[i] + '@' + id + ':' + k + '=' + M[k]);
+      }
+      for (let j = 0; j < M.half; j++) {
+        if (!isFinite(M.capTop[j]) || !isFinite(M.capBot[j]) || M.capTop[j] > M.capBot[j]) {
+          maus.push(ESTILOS[i] + '@' + id + ':cap' + j);
+        }
+      }
+    }
+    teste('os 12 estilos constroem um rig com budgets saos', maus.length === 0,
+      maus.length ? maus.slice(0, 4).join(' ') : ESTILOS.length + ' estilos x 12 IDs, boca em todos');
+  }
+
+  return { saltado: false, linhas };
+}
+
+/* ---------------------------------------------------------------------------
+   Assercoes das emocoes de sessao (`RIG_EMOCOES`, teclas 1-4).
+
+   O overlay corre ENTRE o tracker e o applyRig e escreve seis canais de expressao —
+   e mais nenhum. Duas coisas e que se provam aqui, e a segunda e a que custa:
+
+   · o motor: a rampa e linear em ms, o 0 e o 1 saem exactos, e com peso zero nao se
+     escreve um unico double. Este ultimo e o que faz "desligado" ser literalmente o
+     caminho de sempre — sem ele, uma emocao que nunca foi ligada ja estaria a
+     escrever no `sig` a cada frame e os goldens deixavam de significar o que dizem.
+   · as arestas dos numeros. Os presets nao sao gosto: `expr -0.50` deixa 47.6% do
+     curso do queixo e a -1 deixava ZERO (fala invisivel, boca colada num frown);
+     `wide 0.55` deixa o olho fechado a 16.5% do aberto e a 1 subia para 24%, que ja
+     nao se le como pestanejo. As duas assercoes correspondentes trazem o
+     contra-exemplo com elas — medem tambem o valor que NAO se escolheu, e exigem que
+     esse falhe. Sem isso "o triste deixa falar" era verde com qualquer numero.
+
+   Nota para quem vier: ao largar uma emocao fica um residuo de ~0.003 nos seis canais
+   (o ultimo frame com peso ainda escreve, o seguinte devolve 0 sem tocar). E POR
+   DESENHO — o EMA do tracker come-o no frame seguinte. Nao assertar restauracao
+   exacta do `sig`; o que se asserta e que a chamada com peso 0 nao mexe em nada.
+   --------------------------------------------------------------------------- */
+function assercoesEmocoes(eng) {
+  if (!eng.RIG_EMOCOES) return { saltado: true, linhas: [] };
+  const linhas = [];
+  const teste = (nome, ok, detalhe) => linhas.push({ nome, ok, detalhe });
+  const S = eng.SENS_DEFAULTS;
+  const ORDEM = eng.RIG_EMO_ORDEM, CANAIS = eng.RIG_EMO_CANAIS;
+
+  /* o sig com uma emocao ja a fundo (40 frames a 16.7 ms; a rampa precisa de 15) */
+  const aFundo = (nome, extra) => {
+    const sig = eng.createSig();
+    if (nome) {
+      const emo = eng.createEmo();
+      eng.rigEmoToggle(emo, nome);
+      for (let i = 0; i < 40; i++) eng.rigEmoApply(emo, sig, 16.7);
+    }
+    return Object.assign(sig, extra || {});
+  };
+  const criter = id => {
+    const model = eng.buildModel(id, { rig: true });
+    return { model, rig: eng.buildRig(model) };
+  };
+
+  /* 1. LATCH: a mesma desliga, outra troca. */
+  {
+    const emo = eng.createEmo();
+    const seq = [emo.ativo === null, eng.rigEmoToggle(emo, 'feliz') === 'feliz',
+      eng.rigEmoToggle(emo, 'feliz') === null, eng.rigEmoToggle(emo, 'triste') === 'triste',
+      eng.rigEmoToggle(emo, 'zangado') === 'zangado', eng.rigEmoToggle(emo, 'zangado') === null];
+    teste('latch: a mesma desliga, outra troca', seq.every(Boolean),
+      'null -> feliz -> null -> triste -> zangado -> null' + (seq.every(Boolean) ? '' : ' FALHA em ' + seq.indexOf(false)));
+  }
+
+  /* 1b. E UM NOME QUE NAO E UMA EMOCAO nunca produz peso nem escreve um double.
+         Inclui `__proto__` e `toString`, que a cadeia de prototipos do objecto de
+         presets deixa passar pelo `if (RIG_EMOCOES[nome])` do toggle: o rotulo fica
+         em `emo.ativo`, mas como nenhum deles esta no `RIG_EMO_ORDEM` nao ha peso a
+         subir e o `sig` nao e tocado. E aqui que isso fica preso — se algum dia um
+         nome desses conseguir escrever, esta linha fica vermelha. */
+  {
+    const maus = [];
+    for (const nome of ['xpto', '', 'FELIZ', '__proto__', 'toString', 'constructor']) {
+      const emo = eng.createEmo(), sig = eng.createSig();
+      eng.rigEmoToggle(emo, nome);
+      const antes = {};
+      for (const k of Object.keys(sig)) if (typeof sig[k] === 'number') antes[k] = sig[k];
+      let k = 0;
+      for (let i = 0; i < 40; i++) k = eng.rigEmoApply(emo, sig, 16.7);
+      const escreveu = Object.keys(antes).filter(c => !Object.is(antes[c], sig[c]));
+      if (k !== 0 || escreveu.length) maus.push(JSON.stringify(nome) + ' peso=' + k + ' escreveu ' + escreveu);
+    }
+    teste('um nome que nao e emocao nao produz peso nem escreve', maus.length === 0,
+      maus.length ? maus.join(' | ') : '6 nomes (com __proto__ e toString), peso 0 e sig intacto');
+  }
+
+  /* 2. A RAMPA E EXACTA, e em MILISSEGUNDOS. Chega a 1 dentro dos 250 ms mais um
+        frame, volta a 0 dentro dos 450 mais um, e nunca sai de [0,1] pelo caminho.
+        Os quatro `dt` sao os que o `rAF` da de facto: 120 Hz, 60, 30 e um frame
+        perdido. Um EMA no lugar da rampa nunca chegaria ao 1 exacto — e o 1 exacto e
+        o que garante que a emocao a fundo poe o canal EXACTAMENTE no preset. */
+  {
+    const maus = [], detalhe = [];
+    for (const dt of [8, 16.7, 33, 50]) {
+      const emo = eng.createEmo(), sig = eng.createSig();
+      eng.rigEmoToggle(emo, 'feliz');
+      let nSobe = 0, fora = false, k = 0;
+      for (let i = 0; i < 400 && k !== 1; i++) { k = eng.rigEmoApply(emo, sig, dt); nSobe++; if (!(k >= 0 && k <= 1)) fora = true; }
+      const limSobe = Math.ceil(eng.RIG_EMO.subirMs / dt) + 1;
+      eng.rigEmoToggle(emo, 'feliz');
+      let nDesce = 0;
+      for (let i = 0; i < 400 && k !== 0; i++) { k = eng.rigEmoApply(emo, sig, dt); nDesce++; if (!(k >= 0 && k <= 1)) fora = true; }
+      const limDesce = Math.ceil(eng.RIG_EMO.descerMs / dt) + 1;
+      detalhe.push(dt + 'ms ' + nSobe + '/' + nDesce + ' frames');
+      if (nSobe > limSobe || nDesce > limDesce || fora) {
+        maus.push(dt + 'ms: sobe ' + nSobe + '(<=' + limSobe + ') desce ' + nDesce + '(<=' + limDesce + ')' + (fora ? ' FORA DE [0,1]' : ''));
+      }
+    }
+    teste('a rampa chega a 1 e a 0 exactos, no tempo prometido', maus.length === 0,
+      maus.length ? maus.join(' | ') : detalhe.join('  ') + ' (250/450 ms + 1 frame)');
+  }
+
+  /* 3. COM PESO 0 NAO SE ESCREVE UM DOUBLE — e a promessa que sustenta os goldens.
+        Compara-se o `sig` imediatamente antes e depois DA CHAMADA, e nao com o estado
+        anterior a emocao: ao largar fica o residuo de ~0.003 descrito no cabecalho.
+        Testa-se em frio e depois de um ciclo liga/desliga completo, que e o estado em
+        que o `emo` ja tem `base`/`escrito` preenchidos e portanto o caminho e outro. */
+  {
+    const maus = [];
+    for (const tag of ['em frio', 'depois de um ciclo']) {
+      const emo = eng.createEmo(), sig = eng.createSig();
+      sig.mouth = 0.4; sig.press = 0.2; sig.blinkL = 0.7;
+      if (tag !== 'em frio') {
+        eng.rigEmoToggle(emo, 'surpresa');
+        for (let i = 0; i < 30; i++) eng.rigEmoApply(emo, sig, 16.7);
+        eng.rigEmoToggle(emo, 'surpresa');
+        for (let i = 0; i < 40; i++) eng.rigEmoApply(emo, sig, 16.7);
+      }
+      const antes = {};
+      for (const k of Object.keys(sig)) if (typeof sig[k] === 'number') antes[k] = sig[k];
+      const k = eng.rigEmoApply(emo, sig, 16.7);
+      const escreveu = Object.keys(antes).filter(c => !Object.is(antes[c], sig[c]));
+      if (k !== 0 || escreveu.length) maus.push(tag + ': peso ' + k + ' escreveu ' + escreveu.join(','));
+    }
+    teste('peso 0 nao escreve um unico double', maus.length === 0,
+      maus.length ? maus.join(' | ') : 'Object.is em todo o sig, em frio e depois de um ciclo liga/desliga');
+  }
+
+  /* 4. E A FUNDO SO TOCA NOS SEIS. A abertura vem dos visemes, o pestanejo e o gaze
+        vem da cara: uma emocao que escrevesse `mouth` fazia caretas a falar. Varrem-se
+        TODOS os campos numericos do `sig` menos os seis — assim um canal novo no
+        `createSig` entra nesta assercao sozinho. Os canais de fora entram com valores
+        distintos e nao-nulos, senao escrever zero neles passava despercebido. */
+  {
+    const maus = [];
+    const modelo = eng.createSig();
+    const FORA = Object.keys(modelo).filter(k => typeof modelo[k] === 'number' && CANAIS.indexOf(k) < 0);
+    for (const nome of ORDEM) {
+      const sig = eng.createSig();
+      let v = 0.11;
+      for (const c of FORA) { sig[c] = v; v = +(v + 0.037).toFixed(6); }
+      const antes = {};
+      for (const c of FORA) antes[c] = sig[c];
+      const emo = eng.createEmo();
+      eng.rigEmoToggle(emo, nome);
+      for (let i = 0; i < 40; i++) eng.rigEmoApply(emo, sig, 16.7);
+      for (const c of FORA) if (!Object.is(antes[c], sig[c])) maus.push(nome + '.' + c);
+      /* e a fundo o canal fica EXACTAMENTE no preset (o 1 exacto da rampa) */
+      for (const c of CANAIS) {
+        const alvo = eng.RIG_EMOCOES[nome][c] || 0;
+        if (!Object.is(sig[c], alvo)) maus.push(nome + '.' + c + '=' + sig[c] + ' != ' + alvo);
+      }
+    }
+    teste('a emocao a fundo escreve os seis canais e nenhum outro', maus.length === 0,
+      maus.length ? maus.slice(0, 6).join(' ') : FORA.length + ' campos do sig intactos bit a bit, ' +
+      CANAIS.length + ' exactamente no preset');
+  }
+
+  const IDS = idsSinteticos(60);
+
+  /* 5. O TRISTE DEIXA FALAR. O `expr` negativo desce os cantos e o mesmo budget que
+        os cantos comem e o que sobra para a mandibula: a -1 o queixo fica com ZERO
+        curso e a boca cola num frown mudo. O preset esta em -0.50, que deixa metade.
+        O contra-exemplo (`expr: -1` a mao, que tem de dar exactamente 0) e o que
+        impede esta linha de ser verde com qualquer numero no preset. */
+  {
+    const razoes = [], maus = [];
+    let mortoA1 = true;
+    for (const id of IDS.slice(0, 12)) {
+      const { model, rig } = criter(id);
+      if (!rig.mouth) continue;
+      eng.applyRig(model, rig, aFundo(null, { mouth: 1 }), S);
+      const j0 = rig.jawDrop;
+      eng.applyRig(model, rig, aFundo('triste', { mouth: 1 }), S);
+      const jt = rig.jawDrop;
+      eng.applyRig(model, rig, aFundo(null, { mouth: 1, expr: -1 }), S);
+      if (rig.jawDrop !== 0) mortoA1 = false;
+      if (!(j0 > 0 && jt > 0 && jt >= j0 * 0.35)) maus.push(id + ' ' + jt.toFixed(2) + '/' + j0.toFixed(2));
+      razoes.push(jt / j0);
+    }
+    const mn = Math.min.apply(null, razoes), mx = Math.max.apply(null, razoes);
+    teste('o triste nao mata a fala (e o expr -1 matava)', maus.length === 0 && mortoA1,
+      'jawDrop fica em ' + (100 * mn).toFixed(1) + '-' + (100 * mx).toFixed(1) + '% do sem-emocao em ' +
+      razoes.length + ' IDs (>=35%), e com expr -1 a mao da ' + (mortoA1 ? 'exactamente 0' : 'MAIS QUE ZERO'));
+  }
+
+  /* 6. OS CANTOS CURVAM, e e uma mudanca de FORMA — o feliz levanta-os, o triste e o
+        zangado descem-nos. Nunca ao contrario: essa e a parte dura da assercao.
+        O "estritamente" e que nao pode ser universal e nao e bug: em bocas cuja linha
+        de repouso ja toca a linha do nariz o `capTop` nao deixa subir mais nada, e e
+        exactamente o clamp a fazer o trabalho dele (2 dos 60 IDs, no feliz). */
+  {
+    const maus = [], resumo = [];
+    for (const nome of ORDEM) {
+      const sobe = eng.RIG_EMOCOES[nome].expr > 0;
+      let bons = 0, errados = 0, n = 0;
+      for (const id of IDS) {
+        const { model, rig } = criter(id);
+        const M = rig.mouth; if (!M) continue; n++;
+        eng.applyRig(model, rig, aFundo(nome), S);
+        const d0 = M.pts[0][1] - M.rest[0][1], d1 = M.pts[M.half - 1][1] - M.rest[M.half - 1][1];
+        const sinal = sobe ? -1 : 1;
+        if (d0 * sinal > 1e-9 && d1 * sinal > 1e-9) bons++;
+        else if (d0 * sinal < -1e-9 || d1 * sinal < -1e-9) errados++;
+      }
+      resumo.push(nome + ' ' + (sobe ? 'sobe' : 'desce') + ' ' + bons + '/' + n);
+      if (errados > 0 || bons < n * 0.9) maus.push(nome + ': ' + bons + ' bons, ' + errados + ' ao contrario, de ' + n);
+    }
+    teste('os cantos curvam para o lado da emocao', maus.length === 0,
+      maus.length ? maus.join(' | ') : resumo.join('  ') + ' (0 ao contrario)');
+  }
+
+  /* 7. A SURPRESA NAO APAGA O PESTANEJO. O `wide` abre o olho somando a escala, e
+        somar sobe o CHAO tanto como o tecto: o olho fechado deixa de ser fechado. A
+        0.55 fica em 16.5% do aberto, que ainda se le como um piscar; a 1 fica em 24%,
+        que ja nao. As duas metades tem de estar aqui — se so estivesse a primeira,
+        subir o preset para 1 nao punha nada vermelho. */
+  {
+    const razao = (sig0, sig1, model, rig, olho) => {
+      eng.applyRig(model, rig, sig0, S);
+      const aberto = olho.sh.sy;
+      eng.applyRig(model, rig, sig1, S);
+      return olho.sh.sy / aberto;
+    };
+    const rSur = [], rWide = [];
+    for (const id of IDS.slice(0, 12)) {
+      const { model, rig } = criter(id);
+      const olho = rig.eyes.find(e => e.side !== 'R') || rig.eyes[0];
+      if (!olho) continue;
+      rSur.push(razao(aFundo('surpresa', { blinkL: 1, blinkR: 1 }), aFundo('surpresa', { blinkL: 0.05, blinkR: 0.05 }), model, rig, olho));
+      rWide.push(razao(aFundo(null, { blinkL: 1, blinkR: 1, wide: 1 }), aFundo(null, { blinkL: 0.05, blinkR: 0.05, wide: 1 }), model, rig, olho));
+    }
+    const mxS = Math.max.apply(null, rSur), mnW = Math.min.apply(null, rWide);
+    teste('a surpresa nao apaga o pestanejo (e o wide 1 apagava)', mxS < 0.20 && mnW >= 0.20,
+      'olho fechado a ' + (100 * mxS).toFixed(1) + '% do aberto (<20%), e com wide 1 iria a ' +
+      (100 * mnW).toFixed(1) + '% (que e o valor rejeitado)');
+  }
+
+  /* 8. AO TROCAR, A CARA PASSA PELO NEUTRO. Foi pedido explicitamente que uma emocao
+        nao entre por cima da outra como um crossfade de duas caras: as duas pesam ao
+        mesmo tempo na media ponderada e o `expr` atravessa o zero pelo meio. */
+  {
+    const emo = eng.createEmo(), sig = eng.createSig();
+    eng.rigEmoToggle(emo, 'feliz');
+    for (let i = 0; i < 30; i++) eng.rigEmoApply(emo, sig, 16.7);
+    const partiu = sig.expr;
+    eng.rigEmoToggle(emo, 'triste');
+    let mn = 1e9;
+    for (let i = 0; i < 40; i++) { eng.rigEmoApply(emo, sig, 16.7); mn = Math.min(mn, Math.abs(sig.expr)); }
+    teste('trocar de emocao passa pelo neutro', mn < 0.05 && sig.expr === eng.RIG_EMOCOES.triste.expr,
+      'expr ' + partiu.toFixed(2) + ' -> ' + sig.expr.toFixed(2) + ', passou a ' + mn.toFixed(3) + ' do zero (<0.05)');
+  }
+
+  /* 9. VARRIMENTO. A emocao mexe na mesma geometria que a fala e pelos mesmos budgets:
+        4 emocoes x 5 poses x 25 IDs, a meio da rampa e a fundo. Nenhum ponto da boca
+        pode sair do seu [capTop, capBot] nem virar NaN — e a rede que o `applyRig` ja
+        promete, agora com a emocao a disputar-lhe o espaco. */
+  {
+    const POSES = [{}, { mouth: 1 }, { mouth: 0.6, press: 0.9 }, { mouth: 0.4, mouthW: 0.8, pucker: 0.7 },
+      { mouth: 1, press: 0.5, jawX: 0.6, funnel: 0.5 }];
+    let fora = 0, nan = 0, n = 0, pontos = 0;
+    for (const id of IDS.slice(0, 25)) {
+      const { model, rig } = criter(id);
+      const M = rig.mouth; if (!M) continue;
+      for (const nome of ORDEM) for (const p of POSES) for (const frames of [4, 40]) {
+        const sig = eng.createSig();
+        const emo = eng.createEmo();
+        eng.rigEmoToggle(emo, nome);
+        for (let i = 0; i < frames; i++) eng.rigEmoApply(emo, sig, 16.7);
+        Object.assign(sig, p);
+        eng.applyRig(model, rig, sig, S);
+        n++;
+        for (let i = 0; i < M.half; i++) {
+          const j = (i > 0 && i < M.half - 1) ? 2 * M.half - 2 - i : i;
+          for (const q of (j === i ? [i] : [i, j])) {
+            pontos++;
+            if (!isFinite(M.pts[q][0]) || !isFinite(M.pts[q][1])) nan++;
+            else if (M.pts[q][1] < M.capTop[i] - 1e-9 || M.pts[q][1] > M.capBot[i] + 1e-9) fora++;
+          }
+        }
+        if (!isFinite(rig.jawDrop)) nan++;
+      }
+    }
+    teste('varrimento: a boca fica na cara com emocao', fora === 0 && nan === 0 && n > 0,
+      n + ' combinacoes (4 emocoes x ' + POSES.length + ' poses x 25 IDs x meia/inteira rampa), ' +
+      pontos + ' pontos, ' + fora + ' fora dos caps, ' + nan + ' nao-finitos');
+  }
+
+  return { saltado: false, linhas };
+}
+
 const passaTudo = eng => {
   const a = assercoesV3(eng);
   return a.saltado ? true : a.linhas.every(l => l.ok);
 };
 
-module.exports = { POSE, POSE_X, ESPECTRO, passo, corre, vale, assercoesV3, assercoesAudio,
-  assercoesVisemes, assercoesMaximo, assercoesV4, passaTudo };
+module.exports = { POSE, POSE_X, ESPECTRO, passo, corre, vale, idsSinteticos, assercoesV3,
+  assercoesAudio, assercoesVisemes, assercoesMaximo, assercoesV4, assercoesBocas,
+  assercoesEmocoes, passaTudo };

@@ -18,7 +18,8 @@ const path = require('path');
 const { loadEngine } = require('./lib/shim');
 const { mkLm, mkBs, fresh } = require('./lib/fixtures');
 const { POSE, corre: corre0, vale, assercoesV3, assercoesAudio,
-  assercoesVisemes, assercoesMaximo, assercoesV4 } = require('./lib/guardas');
+  assercoesVisemes, assercoesMaximo, assercoesV4, assercoesBocas,
+  assercoesEmocoes } = require('./lib/guardas');
 
 const GOLDENS = path.join(__dirname, 'goldens.json');
 const eng = loadEngine();
@@ -212,5 +213,7 @@ bateria('assercoes do audio:', assercoesAudio(eng), 'audioMix ainda nao existe n
 bateria('assercoes dos visemes por audio:', assercoesVisemes(eng), 'audioVisemes ainda nao existe no engine — assercoes saltadas');
 bateria('assercoes do maximo pessoal:', assercoesMaximo(eng), 'maxJaw ainda nao existe no engine — assercoes saltadas');
 bateria('assercoes da v4:', assercoesV4(eng), 'speechV4 ainda nao existe no engine — assercoes saltadas');
+bateria('assercoes das bocas trocadas:', assercoesBocas(eng), 'RIG_MOUTH_SWAP ainda nao existe no engine — assercoes saltadas');
+bateria('assercoes das emocoes:', assercoesEmocoes(eng), 'RIG_EMOCOES ainda nao existe no engine — assercoes saltadas');
 
 if (falhou) { console.error(falhou + ' de ' + total + ' assercao(oes) falharam'); process.exit(1); }

@@ -18,7 +18,7 @@ já sobreviveu a alguma coisa.
 | `capture.py` | vídeo → trace JSON pelo MediaPipe (o **mesmo** modelo e opções da CDN de produção) + o áudio (envelope e bandas) |
 | `replay.js` | replay de um trace pela cadeia real do `engine.js` (sem cópia: carrega o ficheiro de produção) |
 | `metrics.js` | métricas da timeline contra o envelope do áudio: `r`, `lag`, alcance, jitter, fecho |
-| `regress.js` | goldens numéricos (v1/v2 bit a bit) + asserções da v3, do áudio, da forma, do máximo e da v4 |
+| `regress.js` | goldens numéricos (v1/v2 bit a bit) + asserções da v3, do áudio, da forma, do máximo, da v4, das bocas trocadas e das emoções |
 | `gridsearch.js` | afinação do `RIG_V3`: grelha de 324 + descida por coordenadas, com guardas duros |
 | `tabela.js` | o relatório: tabela por clip e médias, separadas em treino e holdout |
 | `verify-bancada.js` | verifica a **bancada**, não o rig: determinismo, sanidade da métrica, sensibilidade à calibração |
@@ -53,7 +53,7 @@ estava: um envelope diferente mudava todos os números da bancada por baixo.
 Medir:
 
 ```bash
-node regress.js                          # goldens + asserções da v3 e do áudio  <- sempre
+node regress.js                          # goldens + as asserções todas  <- sempre
 node tabela.js v1 v2 v3 --out final      # a tabela + out/final.json
 node tabela.js --hz 30 v1 v3             # à cadência do mobile
 node replay.js <clip> --modo v3          # um clip, para ir ver o que se passa nele
@@ -225,6 +225,72 @@ Cuidado com o `--rapido`: ele **reescreve** o `out/gridsearch.json` com a venced
 grelha grossa, e essa não é a que está no `RIG_V3` (a do engine saiu da grelha completa
 seguida da descida por coordenadas). Como o ficheiro é o único registo de proveniência
 dos números do `RIG_V3`, uma corrida rápida por curiosidade apaga-o. Copiar antes.
+
+### as bocas trocadas e as emoções na bancada
+
+Duas features que não passam pelo `processLandmarks`: medem-se na geometria
+(`buildModel` → `buildRig` → `applyRig`) e não no `sig`. Correm no `regress.js` como as
+outras e saltam sozinhas contra um engine anterior a elas.
+
+**`assercoesBocas`** — quatro bocas (`tongue`, `fangs`, `zigzag`, `grin`) passam a ter
+destino, e só no rig. O que se prova é a **fronteira**, que é a parte que se parte sem
+ninguém dar por ela:
+
+- **o gerativo tem de ficar byte a byte.** O ID mapeia os traits por pesos acumulados: se
+  a troca escorregasse para o caminho sem `rig`, todos os IDs já gerados mudavam de cara.
+  Não chega verificar que não mudam — **56 dos 200 IDs da amostra caem mesmo numa boca
+  escondida**, e esse número está no detalhe de propósito: sem ele a asserção passava por
+  a amostra não ter nenhuma.
+- **do lado do rig não sobra nenhuma**, nem por sorteio (os 200 IDs) nem por um
+  `cfg.traits` gravado à mão (os 12 estilos forçados). É o segundo caminho que prende a
+  decisão de trocar *depois* do merge dos traits.
+- **e no cfg antigo o que se mede não é o nome do estilo, é a ausência das peças**:
+  `traits:{mouth:5}` com rig dá `smile` e **zero** peças de língua; sem rig continua
+  `tongue` com as duas. O contra-exemplo é o que impede a linha de ser verde por a língua
+  nunca ter sido desenhada.
+
+**`assercoesEmocoes`** — o overlay corre entre o tracker e o `applyRig` e escreve seis
+canais de expressão, mais nenhum. Duas metades:
+
+- **o motor.** Rampa linear em ms: chega a 1 e a 0 **exactos**, dentro dos 250/450 ms mais
+  um frame, a 8 / 16.7 / 33 / 50 ms por frame. O 1 exacto não é cosmética — é ele que põe
+  o canal exactamente no valor do preset, e é dele que dependem as contas abaixo. Com peso
+  0 não se escreve um único double (`Object.is` no `sig` inteiro), que é o que faz
+  "desligado" ser literalmente o caminho de sempre. Há uma linha à parte para um nome que
+  não é emoção: inclui `__proto__` e `toString`, que a cadeia de protótipos deixa passar
+  pelo `if (RIG_EMOCOES[nome])` do toggle — o rótulo fica em `emo.ativo`, mas nenhum deles
+  está no `RIG_EMO_ORDEM`, portanto não há peso a subir e o `sig` não é tocado. É isso que
+  a asserção prende.
+- **as arestas dos números**, cada uma com o contra-exemplo colado: o `triste` deixa o
+  `jawDrop` em **50–74%** do sem-emoção (exige-se ≥ 35%) e `expr: -1` à mão dá
+  **exactamente 0**, que é fala invisível; a `surpresa` deixa o olho fechado a **16.5%** do
+  aberto (exige-se < 20%) e com `wide: 1` iria a **24.0%**, valor que a asserção exige que
+  falhe. Sem a segunda metade, mudar o preset não punha nada vermelho.
+
+Dois avisos para quem lá mexer:
+
+- **ao largar uma emoção fica um resíduo de ~0.003 nos seis canais.** O último frame com
+  peso ainda escreve, o seguinte devolve 0 sem tocar em nada, e o EMA do tracker come o
+  resíduo a seguir. É por desenho. A asserção compara o `sig` antes e depois *da chamada*
+  com peso 0 — quem a reescrever a exigir restauração exacta põe-na vermelha sem haver bug.
+- **"os cantos curvam" é 58/60 IDs no feliz** e 60/60 nos outros três. Os dois que faltam
+  não são falha: são bocas cuja linha de repouso já toca a linha do nariz, onde o `capTop`
+  não deixa subir mais nada — é o clamp a fazer o trabalho dele. Exige-se zero ao contrário
+  e ≥ 90% estritos.
+
+E as mutações que as acendem, feitas antes de as dar por prontas:
+
+| mutação no `engine.js` | fica vermelha |
+|---|---|
+| `triste` com `expr: -1` | o triste não mata a fala (jawDrop 0.0%) |
+| `surpresa` com `wide: 1` | a surpresa não apaga o pestanejo (24.0%) |
+| `tongue: 'grin'` (destino escondido) | a tabela é coerente · com rig nunca sobra escondida |
+| `buildModel` sem a linha da troca | com rig nunca sobra escondida (56 IDs) · o cfg antigo cai na troca |
+| `rigEmoApply` sem o `return 0` | peso 0 não escreve · um nome que não é emoção não escreve |
+| rampa por EMA em vez de linear | a rampa exacta · a fundo no preset · peso 0 · passa pelo neutro |
+
+Nas seis os **goldens ficam OK**, e isso é o outro lado da mesma prova: as duas features
+são neutras para a v1/v2, e quem as mede é só a bancada nova.
 
 ### o `verify-bancada.js`, e o critério da cadência que mudou
 

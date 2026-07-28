@@ -31,7 +31,22 @@ const EPILOGO = ';({ createSig, createCalib, processLandmarks, rigVisemeWeights,
   ' RIG_VISAUDIO: typeof RIG_VISAUDIO === "undefined" ? null : RIG_VISAUDIO,' +
   ' RIG_MAX: typeof RIG_MAX === "undefined" ? null : RIG_MAX,' +
   ' rigSpan: typeof rigSpan === "undefined" ? null : rigSpan,' +
-  ' rigAudioVeto: typeof rigAudioVeto === "undefined" ? null : rigAudioVeto })';
+  ' rigAudioVeto: typeof rigAudioVeto === "undefined" ? null : rigAudioVeto,' +
+  /* o modelo e o rig: as assercoes das bocas e das emocoes medem na geometria, e nao
+     so no `sig` — os cantos da boca, o `jawDrop`, os budgets do `buildRig` */
+  ' buildModel: typeof buildModel === "undefined" ? null : buildModel,' +
+  ' buildRig: typeof buildRig === "undefined" ? null : buildRig,' +
+  ' applyRig: typeof applyRig === "undefined" ? null : applyRig,' +
+  ' parseId: typeof parseId === "undefined" ? null : parseId,' +
+  ' MOUTH_STYLES: typeof MOUTH_STYLES === "undefined" ? null : MOUTH_STYLES,' +
+  ' RIG_MOUTH_SWAP: typeof RIG_MOUTH_SWAP === "undefined" ? null : RIG_MOUTH_SWAP,' +
+  ' RIG_EMOCOES: typeof RIG_EMOCOES === "undefined" ? null : RIG_EMOCOES,' +
+  ' RIG_EMO: typeof RIG_EMO === "undefined" ? null : RIG_EMO,' +
+  ' RIG_EMO_ORDEM: typeof RIG_EMO_ORDEM === "undefined" ? null : RIG_EMO_ORDEM,' +
+  ' RIG_EMO_CANAIS: typeof RIG_EMO_CANAIS === "undefined" ? null : RIG_EMO_CANAIS,' +
+  ' createEmo: typeof createEmo === "undefined" ? null : createEmo,' +
+  ' rigEmoToggle: typeof rigEmoToggle === "undefined" ? null : rigEmoToggle,' +
+  ' rigEmoApply: typeof rigEmoApply === "undefined" ? null : rigEmoApply })';
 
 function loadEngine() {
   const src = fs.readFileSync(ENGINE, 'utf8');
