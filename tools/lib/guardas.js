@@ -25,17 +25,37 @@ const POSE = {
   baixinho:   [0.006, { jawOpen: 0.09, mouthClose: 0.1 }]
 };
 
-function passo(eng, sig, cal, S, nome) {
-  const [gap, bs] = POSE[nome];
-  eng.processLandmarks(mkLm(gap), mkBs(bs), sig, cal, S);
+/* Poses que ficam FORA do `POSE`, e portanto fora do sweep dos goldens: o `regress.js`
+   varre `Object.keys(POSE)` e uma chave nova ali era uma diferenca face ao
+   `goldens.json`, que e intocavel. Resolvem-se pelo mesmo `passo`. */
+const POSE_X = {
+  /* O canal do QUEIXO a mandar — e nao ha nenhuma pose no `POSE` em que isso aconteca.
+     Na `vogal`, que e a que a bancada usa para a calibracao de maximo, o canal dos
+     landmarks ganha (apLM 0.306 contra apBS 0.262) e o `rigSpan` do queixo e inerte:
+     apagar essa chamada do `engine.js` nao mudava um unico numero, coisa que uma
+     auditoria por mutacao provou.
+     O que isto e: o tracker a dar queixo caido com os labios interiores sem separacao
+     medivel — barba, resolucao, luz de cima. E exactamente o caso para que a fusao
+     "fica o maior" existe. O `mouthClose` fica a zero de proposito: com ele a oclusao
+     fechava a boca e nao sobrava saida onde medir o span. */
+  queixoSo: [0.004, { jawOpen: 0.30 }]
+};
+
+/* `nome` e uma chave do `POSE`/`POSE_X` ou o proprio par [gap, blendshapes] */
+const poseDe = p => (Array.isArray(p) ? p : POSE[p] || POSE_X[p]);
+
+function passo(eng, sig, cal, S, nome, dt) {
+  const [gap, bs] = poseDe(nome);
+  eng.processLandmarks(mkLm(gap), mkBs(bs), sig, cal, S, dt);
 }
 
-/* corre uma sequencia [[pose, n], ...]; devolve o estado final e a serie do sig.mouth */
-function corre(eng, S, seq) {
+/* corre uma sequencia [[pose, n], ...]; devolve o estado final e a serie do sig.mouth.
+   `dt` fica por passar por omissao — a cadeia assume 16.7 ms, como sempre assumiu. */
+function corre(eng, S, seq, dt) {
   const { sig, cal } = fresh(eng, S);
   const serie = [];
   for (const [nome, n] of seq) {
-    for (let i = 0; i < n; i++) { passo(eng, sig, cal, S, nome); serie.push(sig.mouth); }
+    for (let i = 0; i < n; i++) { passo(eng, sig, cal, S, nome, dt); serie.push(sig.mouth); }
   }
   return { sig, cal, serie };
 }
@@ -88,6 +108,29 @@ function assercoesV3(eng) {
   teste('vale entre silabas nao sobe', va3 <= va1 + 0.05,
     'v3=' + va3.toFixed(3) + ' vs v1=' + va1.toFixed(3) + ' (+0.05 no maximo)');
 
+  /* UM BLENDSHAPE EM FALTA NAO PODE ENVENENAR A CADEIA. O `rigClamp` deixa passar o
+     NaN e o One Euro nao tem por onde o largar (o `st.x === null` so apanha o primeiro
+     frame): sem os `|| 0` um unico frame sem `jawOpen` prendia a boca em NaN para o
+     resto da sessao — verificado, e o frame mau nem precisa de vir do tracker, basta
+     um blendshape que a versao do modelo deixou de dar.
+     Mede-se na `queixoSo` porque e a unica pose onde o canal do queixo manda: em
+     qualquer pose do `POSE` o `apLM` tapava o buraco e o teste passava por acaso. */
+  {
+    const { sig, cal } = fresh(eng, V3);
+    let finito = true;
+    for (let i = 0; i < 60; i++) {
+      const [gap, bs] = POSE_X.queixoSo;
+      const b = mkBs(bs);
+      if (i === 20) delete b.jawOpen;
+      eng.processLandmarks(mkLm(gap), b, sig, cal, V3);
+      if (!isFinite(sig.mouth) || !isFinite(sig.press)) finito = false;
+    }
+    const sa = corre(eng, V3, [['queixoSo', 60]]).sig.mouth;
+    teste('blendshape em falta nao prende a boca em NaN',
+      finito && Math.abs(sig.mouth - sa) < 0.01,
+      'boca ' + sig.mouth.toFixed(4) + ' um segundo depois do frame mau (sa: ' + sa.toFixed(4) + ')');
+  }
+
   return { saltado: false, linhas };
 }
 
@@ -106,27 +149,44 @@ function assercoesV3(eng) {
    O `dt` fica por passar, tal como no `corre` sem microfone — assim a comparacao de
    neutralidade isola mesmo o audio (a v3 filtra em ms, e 16.666 vs o 16.7 por omissao
    ja chegava para as duas series divergirem por razoes que nada tem a ver com isto). */
-function correAu(eng, S, seq, dbDe, bandasDe) {
+/* `opts` (tudo opcional, e tudo neutro por omissao):
+     dt       passa o passo de tempo a cadeia, para os testes de cadencia
+     confDe   confianca do microfone frame a frame; `null` tira o `au` de todo (o
+              microfone que desaparece), `0` e o microfone que ficou sem confianca
+     bandasDe pode devolver `null` num frame: o espectro deixa de vir mas o `au` fica */
+function correAu(eng, S, seq, dbDe, bandasDe, opts) {
+  const o = opts || {};
   const { sig, cal } = fresh(eng, S);
   const au = { db: dbDe(0), conf: 1 };
   if (bandasDe) au.bandas = bandasDe(0);
-  const serie = [], nivel = [], round = [], spread = [], pesoO = [], pesoE = [];
+  const serie = [], nivel = [], round = [], spread = [], pesoO = [], pesoE = [],
+    amount = [], press = [];
   let i = 0;
   for (const [nome, n] of seq) {
-    const [gap, bs] = POSE[nome];
+    const [gap, bs] = poseDe(nome);
     for (let k = 0; k < n; k++, i++) {
-      au.db = dbDe(i);
-      if (bandasDe) au.bandas = bandasDe(i);
-      eng.processLandmarks(mkLm(gap), mkBs(bs), sig, cal, S, undefined, au);
+      const conf = o.confDe ? o.confDe(i) : 1;
+      let a = null;
+      if (conf !== null) {
+        au.db = dbDe(i);
+        au.conf = conf;
+        if (bandasDe) { const b = bandasDe(i); if (b) au.bandas = b; else delete au.bandas; }
+        a = au;
+      }
+      eng.processLandmarks(mkLm(gap), mkBs(bs), sig, cal, S, o.dt, a);
       serie.push(sig.mouth);
+      press.push(sig.press);
       nivel.push(sig.au ? sig.au.lvl : 0);
       round.push(sig.au ? sig.au.round : 0);
       spread.push(sig.au ? sig.au.spread : 0);
       const w = eng.rigVisemeWeights(sig, S);
       pesoO.push(w.O); pesoE.push(w.E);
+      /* o `amount` do drive e o que a boca do avatar de facto consome — e onde a forma
+         por audio se podia disfarcar de abertura sem passar pelo `sig.mouth` */
+      amount.push(eng.rigVisemeDrive(sig, S).amount);
     }
   }
-  return { sig, serie, nivel, round, spread, pesoO, pesoE };
+  return { sig, serie, nivel, round, spread, pesoO, pesoE, amount, press };
 }
 
 /* ruido estacionario com o tremor de uma sala; semente fixa = replay determinstico */
@@ -226,6 +286,40 @@ function assercoesAudio(eng) {
         'boca ' + mx.toFixed(3) + ' vs ' + semMic.toFixed(3) + ' sem mic (+0.06 no maximo)' +
         ', com o audio a pedir ' + nivel.toFixed(2));
     }
+  }
+
+  /* 7. SILENCIO DIGITAL NAO E UMA MEDICAO DE SILENCIO — e ausencia de medicao, e nao
+        pode entrar no anel do chao de ruido. Zeros exactos chegam a toda a hora (o
+        AnalyserNode antes de o stream debitar, o micro em mute, o AudioContext
+        suspenso) e um so frame deles punha o chao em -100 dB e o gate em -92: a partir
+        dai o ruido de sala a -55 dB lia-se como voz cheia. Medido no engine anterior
+        neste mesmo cenario: nivel 1.000 e a boca escancarada a 1.000, com ninguem a
+        falar. E o modo de falha mais caro que este canal tem, porque nao precisa de
+        ninguem para acontecer — basta ligar a pagina. */
+  {
+    const sala = fazRuido(-55);
+    const r = correAu(eng, S({ audioMix: 1 }), [['repouso', 660]], i => (i < 60 ? -120 : sala()));
+    const mxN = Math.max.apply(null, r.nivel), mxB = Math.max.apply(null, r.serie);
+    teste('silencio digital seguido de sala nao abre a boca', mxN < 0.1 && mxB < 0.02,
+      'nivel max ' + mxN.toFixed(3) + ' (<0.1), boca max ' + mxB.toFixed(4) + ' (<0.02)');
+  }
+
+  /* 8. E O MICROFONE NAO MANDA ANTES DE SABER O QUE E ESTA SALA. O anel nasce
+        pre-preenchido com a primeira amostra, portanto ate haver sala que chegue o
+        percentil do chao e um palpite sobre uma amostra so — e um palpite baixo abre a
+        boca toda. Com o microfone a arrancar cinco frames antes de uma voz alta (o caso
+        real: a permissao e dada com a pessoa ja a falar), sem a rampa `prontoFrac` o
+        nivel ia a 0.57 no quinto frame e a 1.00 no decimo.
+        E a mesma disciplina do `prontoMs` da forma, e tem o mesmo preco: ~1 s de
+        arranque em que o microfone nao vale. Por isso se exige tambem o outro lado —
+        passado esse tempo tem mesmo de valer, senao a rampa era so uma tara. */
+  {
+    const sala = fazRuido(-60), voz = fazRuido(-20);
+    const r = correAu(eng, S({ audioMix: 1 }), [['repouso', 240]], i => (i < 5 ? sala() : voz()));
+    const cedo = Math.max.apply(null, r.nivel.slice(0, 20));
+    const tarde = Math.max.apply(null, r.nivel.slice(-30));
+    teste('o nivel nao se afirma no primeiro terco de segundo', cedo < 0.4 && tarde > 0.9,
+      'nivel nos 1os 20 frames ' + cedo.toFixed(3) + ' (<0.4), 4 s depois ' + tarde.toFixed(3) + ' (>0.9)');
   }
 
   return { saltado: false, linhas };
@@ -339,6 +433,76 @@ function assercoesVisemes(eng) {
       'round ' + cedo.toFixed(2) + ' -> ' + tarde.toFixed(2) + ' ao fim de 2 s (>60%)');
   }
 
+  /* 8. A CARA VETA A FORMA, TAL COMO VETA A ABERTURA. Um /m/ tem tanta energia como a
+        vogal a seguir e um espectro escuro — o microfone nao tem como saber que os
+        labios estao colados, e so a cara sabe. Sem o veto da oclusao nas entradas do
+        solver, o espectro pedia um "O" com a boca selada, e o "O" tem abertura propria
+        (`own` 1.0): a forma entrava no `amount` do drive e a boca abria por uma porta
+        que nao e o `sig.mouth`. Medido no engine anterior, com a boca em 0.046 e o
+        press em 0.95: o `amount` ia a 0.829 na v1 e a 0.843 na v3, contra os 0.046/0.000
+        que o video pedia — 21 px de abertura onde deviam ser 3.6.
+        Duas coisas a exigir, e sao mesmo duas: que o `amount` volte ao do video, e que
+        o press SOBREVIVA (a pose de labios colados e do video e nao se negoceia). */
+  {
+    const seq = [['repouso', 120], ['vogal', AQ], ['bilabial', 60]];
+    const bandas = i => (i < 120 + AQ ? ESPECTRO.neutro : ESPECTRO.escuro);
+    const fala = fazFala(-25, -45, 120);
+    for (const [tag, o] of [['v1', {}], ['v3', { speechV3: 1 }]]) {
+      const sem = correAu(eng, S(o), seq, fala);
+      const com = correAu(eng, S(Object.assign({ audioVisemes: 1 }, o)), seq, fala, bandas);
+      const n = com.amount.length - 1;
+      teste('bilabial: o espectro escuro nao abre a boca (' + tag + ')',
+        com.amount[n] <= sem.amount[n] + 0.02 && com.press[n] > 0.9,
+        'amount ' + com.amount[n].toFixed(3) + ' vs ' + sem.amount[n].toFixed(3) +
+        ' sem espectro, com o canal redondo a pedir ' + com.round[n].toFixed(2) +
+        '; press ' + com.press[n].toFixed(2) + ' (>0.9)');
+    }
+  }
+
+  /* 9. O MICROFONE A MORRER A MEIO DE UM "OOO". A permissao revogada, o separador em
+        segundo plano, o dispositivo desligado: chega `conf` a zero e as bandas deixam
+        de vir. Se o estado do audio CONGELAR em vez de largar, o ultimo `round` fica
+        colado ao `sig.au` e o solver continua a le-lo para sempre — medido no engine
+        anterior, `round` preso em 0.863 e o peso do "O" em 0.65, com a boca do avatar
+        parada num bico ate alguem recarregar a pagina.
+        Larga-se como largaria se a voz tivesse simplesmente parado, que e a unica coisa
+        que se pode afirmar sem ouvir nada. */
+  {
+    const AQV = 120 + AQ, CORTE = AQV + 30;
+    const seq = [['repouso', 120], ['ooo', AQ], ['ooo', 150]];
+    const bandas = i => (i < AQV ? ESPECTRO.neutro : ESPECTRO.escuro);
+    const o = correAu(eng, S({ audioVisemes: 1 }), seq, fazFala(-25, -45, 120),
+      i => (i >= CORTE ? null : bandas(i)), { confDe: i => (i < CORTE ? 1 : 0) });
+    const antes = o.round[CORTE - 1], um = o.round[CORTE + 59];
+    teste('o round larga quando o microfone morre', antes > 0.5 && um < 0.05,
+      'round ' + antes.toFixed(3) + ' no corte -> ' + um.toFixed(3) + ' um segundo depois (<0.05)');
+  }
+
+  /* 10. AS DUAS DOSES AO MESMO TEMPO. `audioMix` e `audioVisemes` sao apostas separadas
+         e tem dose propria, mas partilham o `sig.au` e o mesmo veto — ligar as duas e o
+         unico sitio onde os dois caminhos se cruzam, e nenhum dos outros testes la vai.
+         Exige-se o de sempre: nada de NaN, tudo dentro do curso, e a bilabial a fechar
+         pelos DOIS lados (a abertura e a forma). */
+  {
+    const seq = [['repouso', 120], ['vogal', AQ], ['bilabial', 60]];
+    const bandas = i => (i < 120 + AQ ? ESPECTRO.neutro : ESPECTRO.escuro);
+    const fala = fazFala(-20, -45, 120);
+    for (const [tag, o] of [['v1', {}], ['v3', { speechV3: 1 }]]) {
+      const sem = correAu(eng, S(o), seq, fala);
+      const r = correAu(eng, S(Object.assign({ audioMix: 1, audioVisemes: 1 }, o)), seq, fala, bandas);
+      const n = r.serie.length - 1;
+      const listas = [r.serie, r.nivel, r.round, r.spread, r.amount, r.press];
+      const sao = listas.every(a => a.every(v => isFinite(v) && v >= 0 && v <= 1));
+      teste('as duas doses juntas ficam dentro do curso (' + tag + ')', sao,
+        'boca max ' + mx(r.serie).toFixed(3) + ' amount max ' + mx(r.amount).toFixed(3) +
+        ' nivel max ' + mx(r.nivel).toFixed(3) + (sao ? '' : ' — NaN ou fora de [0,1]'));
+      teste('as duas doses juntas: a bilabial continua a fechar (' + tag + ')',
+        r.serie[n] <= sem.serie[n] + 0.06 && r.amount[n] <= sem.amount[n] + 0.06,
+        'boca ' + r.serie[n].toFixed(3) + ' e amount ' + r.amount[n].toFixed(3) +
+        ' vs ' + sem.serie[n].toFixed(3) + '/' + sem.amount[n].toFixed(3) + ' sem doses');
+    }
+  }
+
   return { saltado: false, linhas };
 }
 
@@ -355,15 +519,67 @@ function assercoesMaximo(eng) {
   const S = o => Object.assign({}, eng.SENS_DEFAULTS, o);
   const linhas = [];
   const teste = (nome, ok, detalhe) => linhas.push({ nome, ok, detalhe });
-  const num = o => { const r = {}; for (const k of Object.keys(o).sort()) if (typeof o[k] === 'number') r[k] = o[k]; return r; };
   /* o neutro das poses sinteticas: `repouso` tem jawOpen 0.05 e gap 0.002 */
   const boca = (o, pose) => corre(eng, S(o), [[pose || 'vogal', 40]]).sig.mouth;
 
+  /* 0. O CONTRATO DO `rigSpan`, na funcao e nao so na cadeia.
+        Sem medicao devolve o MESMO double — a promessa bit a bit que os goldens cobrem
+        de lado, aqui com dentes. E o que entra por aqui vem do `localStorage`, que pode
+        trazer qualquer coisa: o que nao for uma medicao positiva maior que o neutro tem
+        de cair no ramo fixo, e o que for numero mas absurdo tem de ficar preso pelas
+        guardas. Sem isto, um `critters.json` estragado escrevia um span NaN e a boca
+        desaparecia sem ninguem perceber porque. */
+  if (eng.rigSpan && eng.RIG_MAX) {
+    const F = eng.RIG_JAW_SPAN;
+    /* [maximo, neutro] que nao sao medicao nenhuma: o maximo tem de ser um numero
+       positivo E acima do neutro, senao nao ha curso nenhum medido */
+    const RAMO_FIXO = [[0, 0.05], [NaN, 0.05], [-0.3, 0.05], [undefined, 0.05], [null, 0.05],
+      [0.05, 0.05], [0.02, 0.05]];
+    const maus = RAMO_FIXO.filter(([m, n]) => !Object.is(eng.rigSpan(F, m, n), F));
+    teste('entrada degenerada cai no span fixo, bit a bit', maus.length === 0,
+      maus.length ? 'falha em ' + JSON.stringify(maus) : RAMO_FIXO.length + ' casos, todos ' + F);
+    /* e o que e numero mas absurdo fica entre o chao e o tecto. Tres casos que nao sao
+       obvios: o `'0.9'` que o JSON traz como texto e o `>` coage sem se queixar; o
+       neutro NaN, que o `|| 0` do engine trata como zero (nao cai no ramo fixo — cai
+       aqui, e e o sitio certo, porque um neutro que se perdeu nao invalida a medicao);
+       e o neutro ausente, o mesmo caso. */
+    const EXTREMOS = [[1e9, 0.05], [0.0500001, 0.05], [1e-9, 0], ['0.9', 0.05],
+      [0.05, NaN], [0.42, undefined]];
+    const fora = EXTREMOS.filter(([m, n]) => {
+      const s = eng.rigSpan(F, m, n);
+      return !(s >= F * eng.RIG_MAX.chao - 1e-12 && s <= F * eng.RIG_MAX.teto + 1e-12);
+    });
+    teste('medicao extrema fica entre o chao e o tecto', fora.length === 0,
+      '[' + (F * eng.RIG_MAX.chao).toFixed(3) + ', ' + (F * eng.RIG_MAX.teto).toFixed(3) + '] — ' +
+      EXTREMOS.map(([m, n]) => eng.rigSpan(F, m, n).toFixed(3)).join(' '));
+  }
+
   for (const [tag, o] of [['v1', {}], ['v3', { speechV3: 1 }]]) {
-    /* 1. NEUTRALIDADE: sem maximo, o span e o fixo e o sig e o mesmo bit a bit */
-    const a = JSON.stringify(num(corre(eng, S(o), [['vogal', 40]]).sig));
-    const b = JSON.stringify(num(corre(eng, S(Object.assign({ maxJaw: 0, maxLip: 0 }, o)), [['vogal', 40]]).sig));
-    teste('sem maximo o span e o fixo (' + tag + ')', a === b, a === b ? 'identico bit a bit' : 'DIFERE');
+    /* 1. A CALIBRACAO MUDA MESMO A CADEIA, e muda-a nos DOIS canais.
+          A versao anterior desta assercao comparava a omissao com `maxJaw: 0, maxLip: 0`
+          — que e a mesma coisa, 0 contra 0: passava sempre e nao guardava nada.
+          O que se exige agora e o par. Cada canal tem o seu `rigSpan` no engine e cada
+          um so conta na pose onde manda: na `vogal` mandam os landmarks (apLM 0.306
+          contra apBS 0.262) e o `maxJaw` e inerte bit a bit; na `queixoSo` e ao
+          contrario. Sem as quatro linhas, apagar o `rigSpan` de uma das chamadas nao
+          fazia falhar nada — foi o que a auditoria por mutacao provou do lado do queixo,
+          onde nenhuma pose do `POSE` chega. */
+    const vog = boca(o), qx = boca(o, 'queixoSo');
+    const vogL = boca(Object.assign({ maxLip: 0.2 }, o));
+    const vogJ = boca(Object.assign({ maxJaw: 0.9 }, o));
+    const qxJ = boca(Object.assign({ maxJaw: 0.9 }, o), 'queixoSo');
+    const qxL = boca(Object.assign({ maxLip: 0.2 }, o), 'queixoSo');
+    teste('o canal dos labios conta na vogal (' + tag + ')', vogL !== vog && Object.is(vogJ, vog),
+      'maxLip ' + vog.toFixed(3) + ' -> ' + vogL.toFixed(3) + ', e o maxJaw sozinho e inerte (' +
+      (Object.is(vogJ, vog) ? 'bit a bit' : vogJ.toFixed(6)) + ')');
+    teste('o canal do queixo conta na queixoSo (' + tag + ')', qxJ !== qx && Object.is(qxL, qx),
+      'maxJaw ' + qx.toFixed(3) + ' -> ' + qxJ.toFixed(3) + ', e o maxLip sozinho e inerte (' +
+      (Object.is(qxL, qx) ? 'bit a bit' : qxL.toFixed(6)) + ')');
+
+    /* 1b. E a DIRECCAO e a mesma nos dois: curso pessoal largo contem, curto solta */
+    const qxCurto = boca(Object.assign({ maxJaw: 0.2 }, o), 'queixoSo');
+    teste('no queixo, curso largo contem e curto solta (' + tag + ')', qxJ < qx && qxCurto > qx,
+      'queixoSo ' + qxJ.toFixed(3) + ' < ' + qx.toFixed(3) + ' < ' + qxCurto.toFixed(3));
 
     /* 2. SENTIDO: um curso pessoal LARGO contem a boca, um curto solta-a. E o que o
           botao faz, e a direccao depende da pessoa — nao ha aqui um "melhor". */
@@ -391,10 +607,87 @@ function assercoesMaximo(eng) {
   return { saltado: false, linhas };
 }
 
+/* ---------------------------------------------------------------------------
+   Assercoes da fala v4 (`speechV4`).
+
+   A v4 e a v3 com o EMA que honra os taus longos (`rigEmaLongo`, piso 1e-4) em vez do
+   `rigEmaA` (piso 0.02). Duas coisas, e so estas duas, e que ha para provar:
+
+   · **resolve o que diz resolver.** A v3 promete nao mudar de comportamento com a
+     cadencia — e cumpre, excepto no unico tau longo que tem. Acima de tau ~ dt/0.0202
+     (827 ms a 60 fps) o piso de 0.02 morde, o coeficiente volta a ser constante por
+     frame, e a baseline de 2 s do sorriso volta a depender da cadencia. Nao e um
+     detalhe: essa baseline e o que separa "falar a sorrir" de um "eee", e um sorriso
+     que fica por baixo da baseline nao levanta o canal do E.
+   · **e nao toca em mais nada.** A troca do EMA e global dentro da v3, portanto tem de
+     se provar que os outros taus (18 a 120 ms) dao o MESMO double com e sem piso — e o
+     que faz com que a v3, validada ao vivo tal como esta, continue a ser ela.
+   --------------------------------------------------------------------------- */
+function assercoesV4(eng) {
+  if (!('speechV4' in eng.SENS_DEFAULTS)) return { saltado: true, linhas: [] };
+  const S = o => Object.assign({}, eng.SENS_DEFAULTS, o);
+  const linhas = [];
+  const teste = (nome, ok, detalhe) => linhas.push({ nome, ok, detalhe });
+
+  /* o degrau: 2 s de vogal limpa, 2 s da mesma vogal com um sorriso por cima. A
+     baseline do sorriso e um EMA de 2 s, portanto e exactamente isto que a exercita. */
+  const smileWApos2s = (o, hz) => {
+    const dt = 1000 / hz, n = Math.round(2000 / dt);
+    return corre(eng, S(o), [['vogal', n], ['vogalSorri', n]], dt).sig.smileW;
+  };
+  const HZ = [60, 30, 20];
+  const espalha = o => {
+    const v = HZ.map(hz => smileWApos2s(o, hz));
+    return { v, d: Math.max.apply(null, v) - Math.min.apply(null, v) };
+  };
+  const fmt = x => HZ.map((hz, i) => hz + 'Hz ' + x.v[i].toFixed(4)).join('  ');
+
+  const e3 = espalha({ speechV3: 1 }), e4 = espalha({ speechV3: 1, speechV4: 1 });
+  teste('v4: o mesmo degrau de sorriso converge em qualquer cadencia', e4.d < 0.01,
+    fmt(e4) + '  (espalhamento ' + e4.d.toFixed(4) + ' < 0.01)');
+  /* o outro lado, e e ele que impede a assercao de cima de ser verde por acaso: se o
+     degrau nao separasse as cadencias, converger nao provava nada */
+  teste('v3: o mesmo degrau diverge, que e o defeito que a v4 corrige', e3.d > 0.05,
+    fmt(e3) + '  (espalhamento ' + e3.d.toFixed(4) + ' > 0.05)');
+
+  /* CIRURGIA: a 60 fps a v4 tem de dar a MESMA boca e a mesma oclusao que a v3 — bit a
+     bit — e so o canal do sorriso e que pode mudar. E o que sustenta "a v3 fica
+     exactamente como foi validada ao vivo". */
+  {
+    /* acaba NO degrau de sorriso, e nao depois dele: o `smileW` decai em 60 ms e uma
+       comparacao feita ja com ele em zero passava por uma diferenca de 1e-9 */
+    const seq = [['vogal', 60], ['bilabial', 30], ['vogal', 30], ['vogalSorri', 120]];
+    const dt = 1000 / 60;
+    const a = corre(eng, S({ speechV3: 1 }), seq, dt);
+    const b = corre(eng, S({ speechV3: 1, speechV4: 1 }), seq, dt);
+    /* a boca compara-se na SERIE toda e nao so no fim: um transitorio diferente a meio
+       que voltasse ao mesmo sitio passava despercebido no estado final */
+    const bocaIgual = a.serie.every((v, i) => Object.is(v, b.serie[i]));
+    const dSmile = Math.abs(a.sig.smileW - b.sig.smileW);
+    teste('v4 so mexe no canal do sorriso',
+      bocaIgual && Object.is(a.sig.press, b.sig.press) && dSmile > 0.05,
+      'boca ' + (bocaIgual ? 'identica bit a bit nos ' + a.serie.length + ' frames' : 'DIFERE') +
+      ', press ' + (Object.is(a.sig.press, b.sig.press) ? 'identico' : 'DIFERE') +
+      ', smileW ' + a.sig.smileW.toFixed(4) + ' -> ' + b.sig.smileW.toFixed(4) + ' (>0.05)');
+
+    /* o `speechV4` grava-se sempre com o `speechV3` a 1, mas uma config a mao ou um
+       backup antigo por cima podem trazer so um deles: sozinho tem de cair na mesma
+       cadeia, e nao na v1 calada */
+    const so4 = corre(eng, S({ speechV4: 1 }), seq, dt).sig;
+    const v1 = corre(eng, S({}), seq, dt).sig;
+    teste('speechV4 sozinho entra na cadeia v3',
+      Object.is(so4.mouth, b.sig.mouth) && so4.mouth !== v1.mouth,
+      'boca ' + so4.mouth.toFixed(4) + ' — igual a v3+v4 ' +
+      (Object.is(so4.mouth, b.sig.mouth) ? 'bit a bit' : '(NAO)') + ', v1 daria ' + v1.mouth.toFixed(4));
+  }
+
+  return { saltado: false, linhas };
+}
+
 const passaTudo = eng => {
   const a = assercoesV3(eng);
   return a.saltado ? true : a.linhas.every(l => l.ok);
 };
 
-module.exports = { POSE, ESPECTRO, passo, corre, vale, assercoesV3, assercoesAudio,
-  assercoesVisemes, assercoesMaximo, passaTudo };
+module.exports = { POSE, POSE_X, ESPECTRO, passo, corre, vale, assercoesV3, assercoesAudio,
+  assercoesVisemes, assercoesMaximo, assercoesV4, passaTudo };

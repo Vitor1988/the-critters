@@ -9,13 +9,29 @@
 const fs = require('fs');
 const path = require('path');
 
-const ENGINE = path.join(__dirname, '..', '..', 'engine.js');
+/* `CRITTERS_ENGINE=<caminho>` troca o engine que a bancada carrega, e serve para uma
+   coisa so — mas e uma coisa que esta bancada precisa mesmo de poder fazer: correr as
+   assercoes contra um engine ANTERIOR a uma correccao (`git show HEAD:engine.js`) ou
+   contra uma copia sabotada de proposito, para provar que elas ficam VERMELHAS com o
+   bug. Sem isso, "esta assercao tem dentes" e uma afirmacao que ninguem verificou —
+   e a bancada ja teve assercoes que comparavam zero com zero e passavam sempre.
+   Por omissao carrega o engine de producao, como sempre. */
+const ENGINE = process.env.CRITTERS_ENGINE
+  ? path.resolve(process.env.CRITTERS_ENGINE)
+  : path.join(__dirname, '..', '..', 'engine.js');
 
 /* os simbolos que a bancada consome; qualquer um em falta rebenta aqui e nao la a frente */
+/* Os que vao com `typeof` sao os das features atras de toggle: a bancada tem de poder
+   correr contra um engine anterior a elas (e como se prova que uma assercao nova fica
+   vermelha com o bug) sem rebentar no epilogo. */
 const EPILOGO = ';({ createSig, createCalib, processLandmarks, rigVisemeWeights,' +
   ' rigVisemeDrive, rigClamp, SENS_DEFAULTS, RIG_JAW_SPAN, RIG_LIP_SPAN,' +
   ' RIG_V3: typeof RIG_V3 === "undefined" ? null : RIG_V3,' +
-  ' RIG_AUDIO: typeof RIG_AUDIO === "undefined" ? null : RIG_AUDIO })';
+  ' RIG_AUDIO: typeof RIG_AUDIO === "undefined" ? null : RIG_AUDIO,' +
+  ' RIG_VISAUDIO: typeof RIG_VISAUDIO === "undefined" ? null : RIG_VISAUDIO,' +
+  ' RIG_MAX: typeof RIG_MAX === "undefined" ? null : RIG_MAX,' +
+  ' rigSpan: typeof rigSpan === "undefined" ? null : rigSpan,' +
+  ' rigAudioVeto: typeof rigAudioVeto === "undefined" ? null : rigAudioVeto })';
 
 function loadEngine() {
   const src = fs.readFileSync(ENGINE, 'utf8');

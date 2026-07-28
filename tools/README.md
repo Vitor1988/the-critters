@@ -18,7 +18,7 @@ já sobreviveu a alguma coisa.
 | `capture.py` | vídeo → trace JSON pelo MediaPipe (o **mesmo** modelo e opções da CDN de produção) + o áudio (envelope e bandas) |
 | `replay.js` | replay de um trace pela cadeia real do `engine.js` (sem cópia: carrega o ficheiro de produção) |
 | `metrics.js` | métricas da timeline contra o envelope do áudio: `r`, `lag`, alcance, jitter, fecho |
-| `regress.js` | goldens numéricos (v1/v2 bit a bit) + asserções da v3 |
+| `regress.js` | goldens numéricos (v1/v2 bit a bit) + asserções da v3, do áudio, da forma, do máximo e da v4 |
 | `gridsearch.js` | afinação do `RIG_V3`: grelha de 324 + descida por coordenadas, com guardas duros |
 | `tabela.js` | o relatório: tabela por clip e médias, separadas em treino e holdout |
 | `verify-bancada.js` | verifica a **bancada**, não o rig: determinismo, sanidade da métrica, sensibilidade à calibração |
@@ -63,6 +63,26 @@ node replay.js <clip> --modo v3 --audio 0.7 --ruido -55      # com o microfone s
 node replay.js <clip> --modo v3 --visemes 0.7 --ruido -55    # com o espectro do microfone
 ```
 
+### provar que uma asserção tem dentes
+
+Uma asserção verde não vale nada enquanto ninguém a tiver visto vermelha — esta bancada
+já teve uma que comparava `0` com `0` e passava sempre. `CRITTERS_ENGINE` aponta o shim
+a outro `engine.js`, e é assim que se verifica o lado vermelho:
+
+```bash
+git show HEAD:engine.js > /tmp/antes.js                   # ou uma cópia sabotada de propósito
+CRITTERS_ENGINE=/tmp/antes.js node regress.js             # a asserção nova tem de FALHAR aqui
+CRITTERS_ENGINE=/tmp/antes.js node verify-bancada.js --com-v3
+```
+
+Contra o `HEAD` de 2026-07-28 (antes das correcções do áudio) dá **goldens OK e 8 de 58
+asserções vermelhas** — e as duas metades dizem coisas diferentes: os goldens passarem
+prova que aquelas correcções foram neutras para a v1/v2, e as 8 vermelhas são a lista
+exacta do que elas corrigiram.
+
+A regra que daqui sai: **uma correcção no engine chega com uma asserção que fica vermelha
+sem ela**, e quem a escreve confirma-o antes de a dar por feita, não depois.
+
 ### o microfone na bancada
 
 `--audio <0..1>` injecta o `audio.envDb` do próprio trace no `processLandmarks` pelo mesmo
@@ -77,6 +97,22 @@ ele por construção — o `r` sobe de 0.66 para 0.88 e não quer dizer nada. O 
 pode dizer sobre o híbrido é só isto: o vale entre sílabas, o jitter, a amplitude, o gate
 contra ruído, e se a oclusão do vídeo continua a ganhar. As asserções em `lib/guardas.js`
 (`assercoesAudio`) são exactamente essas, e correm no `regress.js` como as da v3.
+
+Duas delas são de um tipo diferente das outras — não perguntam se o híbrido é bom, mas se
+o canal do nível sobrevive ao que lhe chega de facto, e as duas apanharam bugs a sério:
+
+- **silêncio digital.** Zeros exactos chegam a toda a hora (a `AnalyserNode` antes de o
+  stream debitar, o micro em mute, o `AudioContext` suspenso) e **não são uma medição de
+  silêncio**. Um único frame deles punha o chão em −100 dB e o gate em −92: a partir daí
+  o ruído de sala a −55 dB lia-se como voz cheia. Medido no engine anterior, neste
+  cenário: nível 1.000 e boca escancarada a 1.000, sem ninguém falar. É o modo de falha
+  mais caro que este canal tem, porque não precisa de ninguém — basta abrir a página.
+- **a rampa `pronto`.** O anel do chão nasce pré-preenchido com a primeira amostra, e até
+  haver sala que chegue o percentil é um palpite sobre uma amostra só. Com o microfone a
+  arrancar cinco frames antes de uma voz alta (o caso real: a permissão é dada com a
+  pessoa já a falar), sem a rampa o nível ia a 0.57 ao quinto frame e a 1.00 ao décimo.
+  A asserção exige os **dois** lados — nada no primeiro terço de segundo, e cheio um
+  segundo depois, senão a rampa era só uma tara.
 
 ### o espectro na bancada (`--visemes`)
 
@@ -97,6 +133,27 @@ Três avisos sobre o que estes números valem:
   O/U, agudos → E/I), que a forma **não escreve abertura** (`sig.mouth` bit a bit igual
   com a dose no máximo), o silêncio, o arranque e a vogal longa.
 
+E três que se acrescentaram depois, porque a auditoria mostrou que "a forma não escreve
+abertura" estava a ser verificada no sítio errado — no `sig.mouth`, que era o único sítio
+por onde a forma **não** passava:
+
+- **a cara veta a forma, tal como veta a abertura.** Um /m/ tem tanta energia como a
+  vogal a seguir e um espectro escuro; o microfone não tem como saber que os lábios estão
+  colados. Sem o veto da oclusão nas entradas do solver, o espectro pedia um "O" — e o
+  "O" tem abertura própria (`own` 1.0), portanto a forma entrava no `amount` do drive e
+  abria a boca por uma porta que não é o `sig.mouth`. Medido no engine anterior, com a
+  boca em 0.046 e o press em 0.95: `amount` a **0.829** (v1) e **0.843** (v3) contra os
+  0.046/0.000 que o vídeo pedia. A asserção mede o `amount`, e exige também que o press
+  sobreviva — a pose de lábios colados é do vídeo e não se negoceia.
+- **o microfone a morrer a meio de um "ooo".** `conf` a zero, as bandas a faltar, a
+  permissão revogada. Se o estado congela em vez de largar, o último `round` fica colado
+  ao `sig.au` e o solver continua a lê-lo: `round` preso em 0.863 e o peso do "O" em
+  0.65, com a boca parada num bico até alguém recarregar a página.
+- **as duas doses ao mesmo tempo.** `audioMix` e `audioVisemes` têm dose própria mas
+  partilham o `sig.au` e o mesmo veto, e é o único sítio onde os dois caminhos se cruzam.
+  Exige-se o de sempre: nada de NaN, tudo dentro de [0,1], e a bilabial a fechar pelos
+  dois lados (a abertura **e** a forma).
+
 ### a calibração de máximo na bancada
 
 Simula-se passando `maxJaw`/`maxLip` no `sens` do `replay` — o "AAA" da pessoa é o p98
@@ -106,16 +163,134 @@ geométrica e o chão de 0.55×) com números em vez de intuição; a tabela est
 span é o fixo **bit a bit**, um curso largo contém a boca, um curto solta-a, uma medição
 absurda fica presa pelas guardas e a bilabial continua a fechar.
 
+**Há dois canais, e cada um só conta na pose onde manda.** Isto custou uma auditoria por
+mutação a descobrir: apagar o `rigSpan` do canal do **queixo** do `engine.js` não fazia
+falhar uma única asserção. A razão é que todas elas mediam na pose `vogal`, e nela é o
+canal dos *landmarks* que ganha a fusão "fica o maior" — `apLM` 0.306 contra `apBS`
+0.262. O `maxJaw` era inerte **bit a bit**, e o teste passava por não estar a olhar.
+
+A pose que faltava é a `queixoSo` (em `POSE_X`, e não no `POSE`, porque uma chave nova
+ali mudava o sweep dos goldens): queixo caído com os lábios interiores sem separação
+mensurável — barba, resolução, luz de cima. É exactamente o caso para que a fusão
+existe. As asserções são agora um par, e é o par que fecha o buraco:
+
+| pose | quem manda | `maxJaw` sozinho | `maxLip` sozinho |
+|---|---|---|---|
+| `vogal` | landmarks | inerte, bit a bit | 0.365 → 0.320 (v1) |
+| `queixoSo` | queixo | 0.599 → 0.444 (v1) | inerte, bit a bit |
+
+Apagar qualquer uma das duas chamadas ao `rigSpan` põe agora quatro asserções vermelhas.
+
+Há ainda o contrato do **`rigSpan` como função**, e não só através da cadeia: o que entra
+por ali vem do `localStorage` e pode ser qualquer coisa. O que não for uma medição
+positiva e acima do neutro (`0`, `NaN`, negativo, `undefined`, `null`, igual ao neutro)
+tem de devolver o span fixo **`Object.is`-igual**; o que for número mas absurdo (`1e9`,
+uma medição a rasar o neutro, o `'0.9'` que o JSON traz como texto e o `>` coage sem se
+queixar) tem de ficar entre o chão e o tecto. Um `critters.json` estragado escrevia um
+span NaN e a boca desaparecia sem ninguém perceber porquê.
+
+### a v4 na bancada
+
+A v4 é a v3 com o EMA que honra os taus longos (`rigEmaLongo`, piso 1e-4) em vez do
+`rigEmaA` (piso 0.02). Acima de tau ≈ dt/0.0202 — 827 ms a 60 fps — o piso morde, o
+coeficiente volta a ser constante por frame, e a cadeia volta a depender da cadência.
+A v3 só tem um tau nessa zona, a baseline de 2 s do sorriso, mas não é um detalhe: é ela
+que separa "falar a sorrir" de um "eee".
+
+`assercoesV4` prova as duas metades, e são mesmo duas:
+
+- **resolve o que diz resolver.** O mesmo degrau de sorriso a 60/30/20 fps deixa o
+  `smileW` em 0.0426 / 0.1377 / 0.1688 na v3 — 4× — e em 0.1700 / 0.1694 / 0.1688 na v4.
+  Exige-se convergência na v4 (< 0.01) **e** divergência na v3 (> 0.05): sem o segundo,
+  a v4 convergir podia ser só o degrau não separar as cadências.
+- **e não toca em mais nada.** A troca do EMA é global dentro da v3, portanto prova-se
+  que a boca e a oclusão saem **bit a bit iguais** às da v3 na série toda, e que só o
+  canal do sorriso muda. É o que sustenta "a v3 fica exactamente como foi validada".
+
+E porque o `speechV4` se grava sempre com `speechV3: 1` mas uma config à mão ou um backup
+antigo por cima podem trazer só um deles, há uma asserção para o `speechV4` sozinho cair
+na mesma cadeia e não na v1 calada.
+
+Na tabela a v4 **não entra por omissão**: nestas métricas dá o mesmo que a v3, bit a bit
+nos 16 clips, porque o canal do sorriso só chega à boca pelo slider `viseme E`, que está
+a 0. Uma coluna repetida não é informação. `node tabela.js v3 v4` e `--modo v4` aceitam-na
+para quem quiser ver; a igualdade em si é uma verificação do `verify-bancada.js`, para que
+deixar de ser verdade seja uma falha e não uma surpresa.
+
 O `gridsearch.js` **não escreve no `engine.js`**: grava a vencedora em
 `out/gridsearch.json` e os valores copiam-se à mão para o `RIG_V3`. É de propósito — uma
 alteração à cadeia da boca passa sempre por alguém a olhar para ela.
 
+Cuidado com o `--rapido`: ele **reescreve** o `out/gridsearch.json` com a vencedora da
+grelha grossa, e essa não é a que está no `RIG_V3` (a do engine saiu da grelha completa
+seguida da descida por coordenadas). Como o ficheiro é o único registo de proveniência
+dos números do `RIG_V3`, uma corrida rápida por curiosidade apaga-o. Copiar antes.
+
+### o `verify-bancada.js`, e o critério da cadência que mudou
+
+Verifica a **bancada**, não o rig: determinismo, sanidade da métrica, e se um número que
+ela produz sobrevive às escolhas que nós fizemos por ela.
+
+O ponto 4 costumava exigir que **o ranking entre cadeias fosse o mesmo a 60 e a 30 Hz**, e
+esse critério estava errado — reprovava a bancada por uma propriedade que ela devia estar
+a celebrar. A 30 Hz o replay chama a cadeia metade das vezes (`detTick % 2`, como o
+mobile). Os filtros da v1/v2 são coeficientes **por frame**, portanto a metade da cadência
+ficam com o dobro do tempo de subida: suavização de borla, que ninguém pediu. E o `r`
+premeia suavização, porque correlaciona a boca com um envelope que é suave. Resultado: a
+v1 sobe de 0.5748 para 0.6092 sem ninguém lhe ter tocado e passa a v3, que fica onde
+estava (0.5988 → 0.5990) precisamente por filtrar em milissegundos. **Um critério que
+premeia um artefacto não é um critério — é um erro com saída diferente de zero.**
+
+O que substituiu, e é o que a bancada pode mesmo afirmar:
+
+- **cada cadeia tem de ser consistente consigo própria** entre 60 e 30 Hz. Às cadeias em
+  ms exige-se |Δr| ≤ 0.01 (a v3 deriva 0.0002); é a promessa explícita dela, e é o que se
+  quer garantir que continua verdade quando alguém lhe mexer.
+- **as cadeias por frame derivam, e isso mede-se sem reprovar** — é o defeito conhecido
+  delas e a razão de ser da v3. Mas exige-se o contrapeso: elas *têm* de derivar mais
+  (v1 0.0343, 145×). Sem isso, "a v3 não deriva" podia ser só o modo 30 Hz do replay a
+  não estar a exercitar cadência nenhuma, e a asserção passava por não testar nada.
+- **o ranking compara-se só a 60 Hz**, que é a cadência a que o `rAF` corre e a que os
+  números do README foram medidos, e tem de bater com o do teste do percentil.
+
+E dois pontos novos: a **v4 idêntica à v3** nos 16 clips (ver acima), e o **microfone
+simulado a 30 Hz** — o ponto 4 corre a 30 Hz sem áudio nenhum, e o caminho do microfone
+tem estado que se dimensiona pelo `dt` (o anel do chão, a rampa `pronto`, os EMA da
+forma) que mais nenhum teste exercita nessa cadência. É sanidade e não qualidade: nada
+fora de [0,1], nada NaN, a boca a abrir e a voltar, e os números na mesma ordem de
+grandeza (rácio 30/60 do pico 0.98–1.01, do nível 1.007).
+
+### o que a bancada continua a NÃO cobrir
+
+Escrito para a próxima sessão não voltar a descobrir isto do zero:
+
+- **o envelope e as bandas do `capture.py` são uma reimplementação em numpy sobre o PCM
+  do ffmpeg — não é o que a `AnalyserNode` calcula no browser.** E o `_parity.html`, que é
+  o único gate de paridade que existe, compara **landmarks** e não toca no áudio: deste
+  lado não há nada a verificar que os dois batam certo. O desvio foi medido fora desta
+  bancada em ~3.7 dB por frame (número de fora, aqui não reproduzível). Chega para
+  exercitar o gate, o chão e o tecto; não chega para afinar limiares ao dB.
+- **o `dt` do replay é fixo** (16.667 ms, ou 33.3 a `--hz 30`). O `rAF` real varia, salta
+  frames e congela ao mudar de separador. Nada aqui apanha um `dt` de 250 ms.
+- **`--hz` só conhece dois valores**: 60 e 30. Qualquer outro número cai no caminho dos 60
+  e dá exactamente os mesmos números — não há aqui uma cadência contínua. (As asserções
+  sintéticas do `regress.js` é que passam `dt` a sério, e é lá que a v4 se mede a 20 Hz.)
+- **a cara está sempre presente.** Não há um único frame sem tracker, sem `blendshapes`,
+  com a cara a sair de campo ou com duas caras. O que existe é uma asserção de um
+  blendshape em falta na v3 — o resto do caminho de perda de tracking não está medido.
+- **não há verdade fonética**, e não há nenhuma no horizonte sem alinhamento forçado.
+- **os clips são dois actores americanos a declamar duas frases.** Não há fala espontânea,
+  nem português, nem uma pessoa a falar à distância a que usa isto. É o buraco maior, e o
+  que o tapa está no fim deste ficheiro: 3-5 clips do próprio utilizador em `clips/user/`.
+
 Armadilha conhecida no WSL: `mediapipe` puxa `opencv-python`, que precisa de `libGL.so.1`.
 O `requirements.txt` fixa a variante `-headless` justamente por isso.
 
-**Antes de qualquer commit que toque na cadeia da boca**: `node regress.js`. Ele compara
-com `goldens.json` bit a bit — se a v1 ou a v2 mudarem um dígito, o toggle não era neutro
-e a alteração está errada, seja o que for que as métricas digam.
+**Antes de qualquer commit que toque na cadeia da boca**: `node regress.js` e
+`node verify-bancada.js --com-v3`. O primeiro compara com `goldens.json` bit a bit — se a
+v1 ou a v2 mudarem um dígito, o toggle não era neutro e a alteração está errada, seja o
+que for que as métricas digam. O `goldens.json` **não se recaptura**: a promessa dele é
+ser anterior às features novas e continuar verde.
 
 ## Guião do A/B ao vivo
 

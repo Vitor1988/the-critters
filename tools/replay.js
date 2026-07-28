@@ -39,8 +39,12 @@
       nao tem uma copia dela.
 
   Uso:
-     node tools/replay.js <clip> [--modo v1|v2|v3] [--hz 60|30] [--pct 10]
+     node tools/replay.js <clip> [--modo v1|v2|v3|v4] [--hz 60|30] [--pct 10]
                                  [--audio <0..1>] [--visemes <0..1>] [--ruido <db>] [--json]
+
+  `--hz` so conhece dois valores: 60 (um tick por frame) e 30 (`detTick % 2`, o mobile).
+  Qualquer outro numero cai no caminho dos 60 e da exactamente os mesmos numeros — nao
+  ha aqui uma cadencia continua, ha os dois casos que a pagina de facto tem.
 */
 const fs = require('fs');
 const path = require('path');
@@ -117,7 +121,13 @@ function fazCalib(tr, SENS, percentil) {
   };
 }
 
-const MODOS = { v1: {}, v2: { speechV2: 1 }, v3: { speechV3: 1 }, v3auto: { speechV3: 1, speechAuto: 1 } };
+/* a `v4` grava-se com o `speechV3` a 1 tambem, e e assim que a pagina a escreve: e a
+   mesma cadeia, so muda o EMA. Nas metricas desta bancada ela da o MESMO que a v3 (o
+   unico canal que difere e o do sorriso, e ele so chega a boca pelo slider `viseme E`,
+   que esta a 0) — esta aqui para se poder pedir, e para o `verify-bancada` poder provar
+   essa igualdade em video real em vez de a assumir. */
+const MODOS = { v1: {}, v2: { speechV2: 1 }, v3: { speechV3: 1 },
+  v4: { speechV3: 1, speechV4: 1 }, v3auto: { speechV3: 1, speechAuto: 1 } };
 
 /* Referencia SEM cadeia: a abertura crua deste frame, com a mesma fusao e a mesma
    calibracao, mas sem um unico filtro. Serve para medir o atraso que a *cadeia*
@@ -235,7 +245,7 @@ if (require.main === module) {
   const val = (f, d) => { const i = args.indexOf(f); return i >= 0 ? args[i + 1] : d; };
   const FLAGS = ['--modo', '--hz', '--pct', '--audio', '--visemes', '--ruido'];
   const nome = args.find(a => !a.startsWith('--') && FLAGS.indexOf(args[args.indexOf(a) - 1]) < 0);
-  if (!nome) { console.error('uso: node tools/replay.js <clip> [--modo v1|v2|v3] [--hz 60|30] [--pct 10] [--audio 0..1] [--visemes 0..1] [--ruido dB] [--json]'); process.exit(2); }
+  if (!nome) { console.error('uso: node tools/replay.js <clip> [--modo v1|v2|v3|v4] [--hz 60|30] [--pct 10] [--audio 0..1] [--visemes 0..1] [--ruido dB] [--json]'); process.exit(2); }
   const tr = carrega(nome);
   const tl = replay(tr, { modo: val('--modo', 'v1'), hz: +val('--hz', 60), pct: +val('--pct', 10),
     audio: +val('--audio', 0), visemes: +val('--visemes', 0), ruido: +val('--ruido', -55) });

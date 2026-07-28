@@ -5,7 +5,12 @@
      node tools/tabela.js v1 v2 v3        # com a v3
      node tools/tabela.js --hz 30 v1 v3   # cadencia do mobile
      node tools/tabela.js --out baseline  # grava tools/out/baseline.json
-*/
+
+   A `v4` aceita-se como qualquer outra, mas nao entra na tabela por omissao de
+   proposito: nestas metricas ela da o MESMO que a v3, bit a bit nos 16 clips (o unico
+   canal que difere e a baseline do sorriso, e ela so chega a boca pelo slider `viseme
+   E`, que esta a 0). Uma coluna repetida nao e informacao — quem quiser confirmar a
+   igualdade tem-na como verificacao no `verify-bancada.js`. */
 const fs = require('fs');
 const path = require('path');
 const { carrega, replay } = require('./replay');
