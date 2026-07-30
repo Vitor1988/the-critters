@@ -1402,7 +1402,15 @@ function rigSpeechV3(bs, sig, calib, SENS, dt, pucker, smile, mouthR, auMix, auA
   v.ap = ap;   /* guardado só para o debug: com `ap` alto e a boca fechada, quem fecha é a oclusão */
   /* a mistura do microfone entra aqui e só aqui: na abertura crua, ANTES da oclusão e
      do pucker, e já com o veto da oclusão aplicado ao peso (`rigAudioVeto`) */
-  let drv = Math.pow(ap, K.gamma);
+  /* `fala baixa` (slider `lowSpeech`, omissão 0): dobra a curva gamma para baixo, e é a
+     resposta ao caso que a janela fixa achata — quem fala sem articular pica o jawOpen
+     a 0.12-0.18, o que dá 19-33% do curso, e a abertura VISÍVEL é quase quadrática no
+     sig.mouth (0.28 são ~5 px, imperceptível). Medido nos traces a 0.35 de excursão:
+     dose 1 (gamma 0.45) sobe o p95 de 0.284 para 0.435 (~12 px), com +55% de tremor —
+     o preço mais linear das alavancas medidas, e é o utilizador que o dosa. A 0 é o
+     MESMO double; a fala alta não mexe (o pow preserva o 0 e o 1). Com `audioMix` a 1
+     e oclusão abaixo do veto, o drv é 100% áudio e isto é invisível — assertado. */
+  let drv = Math.pow(ap, K.gamma - (SENS.lowSpeech || 0) * 0.25);
   if (auMix > 0) drv += (auAlvo - drv) * rigAudioVeto(auMix, v.oc);
   let alvo = rigClamp(drv * SENS.mouthGain *
     (1 - K.ocGate * v.oc) * (1 - 0.35 * pucker), 0, 1);
@@ -1561,7 +1569,9 @@ function processLandmarks(lm, bs, sig, cal, SENS, dtMs, au) {
     /* a mistura do microfone entra antes da trava do press e do pucker, pelas mesmas
        razões da v3, e com o mesmo veto — aqui a oclusão é o `press`, que é o único
        sinal de lábios colados que esta cadeia tem */
-    let drv = Math.pow(rigClamp(Math.max(openBS, openLM), 0, 1), 0.85);
+    /* mesma dose `fala baixa` da v3, na curva da v1 (0.85 → 0.55 a dose 1: p95 0.220
+       para 0.367 medido nos traces a 0.35 de excursão). A 0 é o double validado. */
+    let drv = Math.pow(rigClamp(Math.max(openBS, openLM), 0, 1), 0.85 - (SENS.lowSpeech || 0) * 0.30);
     if (auMix > 0) drv += (auAlvo - drv) * rigAudioVeto(auMix, press);
     const jaw = rigClamp(drv * SENS.mouthGain, 0, 1);
     const openT = jaw * (v2 ? 1 : 1 - 0.6 * press) * (1 - 0.35 * pucker);
@@ -2130,7 +2140,7 @@ function drawModel(ctx, model, sig, SENS, frozen) {
 /* `speechV4` grava-se SEMPRE com `speechV3` a 1 (é a mesma cadeia, outro filtro): assim
    a hierarquia é v4 > v3 > v2 > v1 na leitura, e quem só olha para o `speechV3` — o
    debug da rig-page, uma config antiga — continua a ver a verdade. */
-const SENS_DEFAULTS = { mouthGain: 1, mouthWidth: 1, openHeight: 1, puckerFx: 1, visemeE: 0, closeSpeed: 1, gazeGain: 1, blinkGain: 1, headGain: 1, headMove: 1, sphere: 1, lean: 1, smooth: 1, speechV2: 0, speechV3: 0, speechV4: 0, speechAuto: 0, audioMix: 0, audioVisemes: 0, maxJaw: 0, maxLip: 0 };
+const SENS_DEFAULTS = { mouthGain: 1, mouthWidth: 1, openHeight: 1, puckerFx: 1, visemeE: 0, closeSpeed: 1, lowSpeech: 0, gazeGain: 1, blinkGain: 1, headGain: 1, headMove: 1, sphere: 1, lean: 1, smooth: 1, speechV2: 0, speechV3: 0, speechV4: 0, speechAuto: 0, audioMix: 0, audioVisemes: 0, maxJaw: 0, maxLip: 0 };
 /* ---------- favoritos (localStorage, partilhados pelas três páginas) ---------- */
 const FAVS_KEY = 'critter-favs';
 const FAVS_MAX = 60;

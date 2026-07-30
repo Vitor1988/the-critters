@@ -296,6 +296,20 @@ E as mutações que as acendem, feitas antes de as dar por prontas:
 Nas seis os **goldens ficam OK**, e isso é o outro lado da mesma prova: as duas features
 são neutras para a v1/v2, e quem as mede é só a bancada nova.
 
+**`assercoesFalaBaixa`** — o slider `lowSpeech` medido onde ele vive: traces reais com a
+excursão da articulação escalada para 0.35 do desvio face ao p10 do próprio clip (fala
+baixa sintetizada de fala real — o caso que nenhum golden cobria). Cinco linhas: dose 0
+bit a bit *com âncora absoluta* (a comparação `{}` vs `{lowSpeech: 0}` corre ambas no
+mesmo engine, e uma mutação de desvio constante passava por ela — o p95 exacto do trace 1
+é que a apanha); a dose 1 revive a fala baixa (p95 0.345 → 0.492 na v3); a fala alta não
+satura e o vale mede-se só nos frames com boca (> 0.02, senão os silêncios punham o p20 a
+zero e a razão passava com tudo); **com som, dose 0 é bit a bit e dose 1 fica ≤ 1e-12**
+(o resíduo real é 1 ulp: `drv + (au − drv) * 1` não é `au` bit a bit — não se "limpa" o
+ulp porque isso era mexer na linha da mistura, que é intocável); e o tremor da dose 1
+contido a 1.7×. Mutações provadas: curva desviada com a dose a 0 (âncora vermelha) e dose
+a vazar para o `auAlvo` (a guarda do som acende com |d| de 7.8e-2). Salta sem traces no
+disco.
+
 ### o `verify-bancada.js`, e o critério da cadência que mudou
 
 Verifica a **bancada**, não o rig: determinismo, sanidade da métrica, e se um número que

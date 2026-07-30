@@ -1136,6 +1136,153 @@ const passaTudo = eng => {
   return a.saltado ? true : a.linhas.every(l => l.ok);
 };
 
+/* ---------------------------------------------------------------------------
+   fala baixa (slider `lowSpeech`) — a dose que dobra a curva gamma do video.
+   O caso que nenhum golden cobria: quem fala sem articular pica o jawOpen a
+   0.12-0.18, o que a janela fixa converte em 19-33% do curso — e a abertura
+   VISIVEL e quase quadratica no sig.mouth, portanto isso sao ~5 px. Mede-se em
+   traces reais com a excursao ESCALADA para 0.35 do desvio face ao p10 do
+   proprio clip (fala baixa sintetizada de fala real: o ritmo fica, a energia
+   desce). Corre pelo replay (a cadeia real, com o relogio do loop) e por isso
+   salta tambem quando nao ha traces no disco. */
+function assercoesFalaBaixa(eng) {
+  if (!('lowSpeech' in eng.SENS_DEFAULTS)) return { saltado: true, linhas: [] };
+  let rp, trs;
+  try {
+    rp = require('../replay');
+    trs = ['01-01-01-01-01-01-01', '01-01-01-01-01-01-02'].map(rp.carrega);
+  } catch (e) { return { saltado: true, linhas: [] }; }
+  const linhas = [];
+  const teste = (nome, ok, detalhe) => linhas.push({ nome, ok, detalhe });
+  const p95 = a => { const s = a.slice().sort((x, y) => x - y); return s[Math.round((s.length - 1) * 0.95)]; };
+  const p20 = a => { const s = a.slice().sort((x, y) => x - y); return s[Math.round((s.length - 1) * 0.20)]; };
+  const media = a => a.reduce((x, y) => x + y, 0) / a.length;
+  const jitter = a => {
+    let s = 0, n = 0;
+    for (let i = 2; i < a.length; i++) { const d = a[i] - 2 * a[i - 1] + a[i - 2]; s += d * d; n++; }
+    return Math.sqrt(s / Math.max(1, n));
+  };
+
+  /* escala o desvio da articulacao (jawOpen, mouthClose e o intervalo entre os labios
+     interiores — indices 13/14 do formato do trace, ver LM_IDX no capture.py) face ao
+     p10 do proprio clip. So a cara: o envelope de audio fica intacto de proposito. */
+  const escala = (tr0, s) => {
+    const t2 = JSON.parse(JSON.stringify({ clip: tr0.clip, fps: tr0.fps, bsNames: tr0.bsNames,
+      frames: tr0.frames, audio: tr0.audio }));
+    const iJaw = tr0.bsNames.indexOf('jawOpen'), iCl = tr0.bsNames.indexOf('mouthClose');
+    const p10 = a => { const o = a.slice().sort((x, y) => x - y); return o[Math.round((o.length - 1) * 0.10)]; };
+    const jaw10 = p10(tr0.frames.map(f => f.bs[iJaw]));
+    const cl10 = p10(tr0.frames.map(f => f.bs[iCl]));
+    const gap = f => Math.hypot(f.lm[13][0] - f.lm[14][0], f.lm[13][1] - f.lm[14][1]);
+    const gap10 = p10(tr0.frames.map(gap));
+    for (const f of t2.frames) {
+      f.bs[iJaw] = jaw10 + (f.bs[iJaw] - jaw10) * s;
+      f.bs[iCl] = cl10 + (f.bs[iCl] - cl10) * s;
+      const g = gap(f);
+      if (g > 1e-9) {
+        const k = (gap10 + (g - gap10) * s) / g;
+        const m = [(f.lm[13][0] + f.lm[14][0]) / 2, (f.lm[13][1] + f.lm[14][1]) / 2];
+        f.lm[13] = [m[0] + (f.lm[13][0] - m[0]) * k, m[1] + (f.lm[13][1] - m[1]) * k];
+        f.lm[14] = [m[0] + (f.lm[14][0] - m[0]) * k, m[1] + (f.lm[14][1] - m[1]) * k];
+      }
+    }
+    const idx = {};
+    t2.bsNames.forEach((n, i) => { idx[n] = i; });
+    t2.bsIdx = idx;
+    t2.bsObj = t2.frames.map(fr => {
+      const o = {};
+      for (let i = 0; i < t2.bsNames.length; i++) o[t2.bsNames[i]] = fr.bs[i];
+      return o;
+    });
+    return t2;
+  };
+
+  const corrida = (tr, modo, dose, au) => rp.replay(tr, Object.assign({ modo, sens: { lowSpeech: dose } },
+    au ? { audio: 1, ruido: -55 } : {})).mouth;
+
+  /* 1. dose 0 e o MESMO double — em duas metades, porque uma sem a outra e cega:
+        a comparacao {} vs {lowSpeech: 0} corre AMBAS no mesmo engine, portanto um
+        desvio constante na curva passava por ela (verificado por mutacao). A ancora
+        absoluta e um golden em miniatura: o p95 exacto da corrida dose-0 no trace 1,
+        capturado com a feature ja no repo mas com a dose a 0 — se isto ficar
+        vermelho, ou a cadeia de video mudou (proibido) ou o trace mudou. */
+  {
+    const ANCORA = { v1: 0.58542772790736408, v3: 0.62714797786701004 };
+    const maus = [];
+    for (const modo of ['v1', 'v3']) {
+      const a = rp.replay(trs[0], { modo }).mouth;
+      const b = corrida(trs[0], modo, 0, false);
+      for (let i = 0; i < a.length; i++) if (!Object.is(a[i], b[i])) { maus.push(modo + '@' + i); break; }
+      if (!Object.is(p95(a), ANCORA[modo])) maus.push(modo + ' p95=' + p95(a).toPrecision(17) + ' != ancora');
+    }
+    teste('dose 0 e bit a bit a cadeia de sempre', maus.length === 0,
+      maus.length ? maus.join(' ') : 'v1 e v3 identicos frame a frame, e iguais a ancora absoluta');
+  }
+
+  const baixos = trs.map(t => escala(t, 0.35));
+
+  /* 2. a fala baixa revive — o pedido, escrito como teste */
+  {
+    const r = {};
+    for (const modo of ['v1', 'v3']) {
+      r[modo] = {
+        d0: media(baixos.map(t => p95(corrida(t, modo, 0, false)))),
+        d1: media(baixos.map(t => p95(corrida(t, modo, 1, false))))
+      };
+    }
+    teste('a dose 1 revive a fala a 0.35 de excursao',
+      r.v3.d1 >= 0.40 && r.v1.d1 >= 0.33 && r.v3.d1 >= r.v3.d0 + 0.10 && r.v1.d1 >= r.v1.d0 + 0.10,
+      'p95 v3 ' + r.v3.d0.toFixed(3) + ' -> ' + r.v3.d1.toFixed(3) + ' (>=0.40), v1 ' +
+      r.v1.d0.toFixed(3) + ' -> ' + r.v1.d1.toFixed(3) + ' (>=0.33)');
+  }
+
+  /* 3. a fala alta nao satura nem perde o vale entre silabas */
+  {
+    const d0 = corrida(trs[0], 'v3', 0, false), d1 = corrida(trs[0], 'v3', 1, false);
+    /* o vale mede-se so na fala (boca > 0.02): com os silencios dentro, o p20 e zero e
+       a razao passava com qualquer coisa — vacua, como a bancada nao quer */
+    const ativo = a => a.filter(x => x > 0.02);
+    const v0 = p20(ativo(d0)) / Math.max(1e-6, p95(d0)), v1 = p20(ativo(d1)) / Math.max(1e-6, p95(d1));
+    teste('a fala alta nao satura com a dose a 1', p95(d1) <= 0.9 && v1 <= v0 * 1.25 + 0.02,
+      'p95 ' + p95(d0).toFixed(3) + ' -> ' + p95(d1).toFixed(3) + ' (<=0.9), vale/pico na fala ' +
+      v0.toFixed(3) + ' -> ' + v1.toFixed(3) + ' (<= ' + (v0 * 1.25 + 0.02).toFixed(3) + ')');
+  }
+
+  /* 4. O SOM NAO MUDA — a restricao que mandou no desenho, em duas metades honestas:
+        (a) com a dose a 0, o caminho com som e BIT A BIT o de hoje (a chave nova nao
+        toca em nada); (b) com a dose a 1 e audioMix 1, o veto esta a 1 (nestes clips o
+        press nunca passa 0.20 < vetoDead) e o drv de video e substituido pelo audio —
+        analiticamente por inteiro, em virgula flutuante ate ~1 ulp por frame, porque
+        `drv + (au - drv) * 1` nao e `au` bit a bit. Exige-se <= 1e-12, que e "nada"
+        com muita folga; nao se toca na linha da mistura para limpar o ulp de proposito
+        (a linha do audio nao se mexe, e essa e a promessa maior). */
+  {
+    const s0 = rp.replay(trs[0], { modo: 'v3', audio: 1, ruido: -55 });
+    const sZ = rp.replay(trs[0], { modo: 'v3', audio: 1, ruido: -55, sens: { lowSpeech: 0 } });
+    const s1 = rp.replay(trs[0], { modo: 'v3', audio: 1, ruido: -55, sens: { lowSpeech: 1 } });
+    let mauZ = -1, dMax = 0;
+    for (let i = 0; i < s0.mouth.length; i++) {
+      if (!Object.is(s0.mouth[i], sZ.mouth[i])) { if (mauZ < 0) mauZ = i; }
+      dMax = Math.max(dMax, Math.abs(s0.mouth[i] - s1.mouth[i]));
+    }
+    const prMax = Math.max.apply(null, s0.press);
+    teste('com som, dose 0 e bit a bit e dose 1 e invisivel', mauZ < 0 && dMax <= 1e-12 && prMax < eng.RIG_AUDIO.vetoDead,
+      (mauZ < 0 ? 'dose 0 identica' : 'dose 0 diverge no frame ' + mauZ) +
+      ', dose 1 |d| max ' + dMax.toExponential(1) + ' (<=1e-12), press max ' + prMax.toFixed(3) +
+      ' < vetoDead ' + eng.RIG_AUDIO.vetoDead);
+  }
+
+  /* 5. o preco em tremor fica dentro do medido (+55% a dose 1; tecto com folga) */
+  {
+    const j0 = media(baixos.map(t => jitter(corrida(t, 'v3', 0, false))));
+    const j1 = media(baixos.map(t => jitter(corrida(t, 'v3', 1, false))));
+    teste('o tremor da dose 1 fica contido', j1 <= j0 * 1.7,
+      'jitter ' + j0.toFixed(4) + ' -> ' + j1.toFixed(4) + ' (<= 1.7x)');
+  }
+
+  return { linhas };
+}
+
 module.exports = { POSE, POSE_X, ESPECTRO, passo, corre, vale, idsSinteticos, assercoesV3,
   assercoesAudio, assercoesVisemes, assercoesMaximo, assercoesV4, assercoesBocas,
-  assercoesEmocoes, passaTudo };
+  assercoesEmocoes, assercoesFalaBaixa, passaTudo };

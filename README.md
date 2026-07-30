@@ -168,6 +168,20 @@ na cara. As duas primeiras renasceram como **sliders com omissão neutra** (`vis
 `fecho`): a dose passou a ser de quem usa, não minha — a 0/1 são exactamente a cadeia
 validada, `fecho` a 2 é o antigo snap, `viseme E` a 1 é a experiência revertida.
 
+**`fala baixa` (slider, omissão 0)** — o caso que a janela fixa achata, medido de frente:
+quem fala sem articular pica o `jawOpen` a 0.12-0.18, o que a janela converte em 19-33% do
+curso — e como a abertura *visível* é quase quadrática no `sig.mouth`, isso são ~5 px, no
+limiar do imperceptível (com o microfone a 0.7 os mesmos picos dão 17 px, e foi essa
+comparação que expôs o problema). O slider dobra a curva gamma do vídeo para baixo
+(`0.70 → 0.45` na v3/v4, `0.85 → 0.55` na v1, a dose 1): nos traces escalados para 0.35 de
+excursão o p95 sobe de 0.284 para 0.435 (~12 px, legível), ao preço medido de +55% de
+tremor e de um vale entre sílabas mais alto — o compromisso é de quem usa, como nos outros
+sliders. Com som, nada muda: a dose 0 é bit a bit a cadeia de hoje, e com `audioMix` a 1 o
+áudio substitui o alvo de vídeo na fala normal por inteiro (a bancada exige diferença
+≤ 1e-12 — o resíduo real é 1 ulp, 4e-17). Se a dose 1 ainda souber a pouco, a alavanca
+seguinte já existe e está medida: o `auto range`, com o custo de 3.5× de tremor que a
+bancada lhe documentou.
+
 **`fala v2` (toggle no studio, desligado por omissão)** — a parte que afinal fazia falta,
 isolada para A/B ao vivo: o press cala o *queixo* antes da fusão e deixa de travar depois.
 Com press crónico, a trava pós-fusão da v1 põe um teto na abertura (~82% com press 0.3)
